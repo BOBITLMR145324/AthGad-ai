@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" class="w-full h-full" style="overflow: visible;">
+  <defs>
+    <!-- Seamless Synchronized Animations -->
+    <style>
+      /* 1. Outer Interstitial Emerald Pulse */
+      @keyframes pulseEmeraldField {
+        0%, 100% {
+          fill-opacity: 0.15;
+          filter: drop-shadow(0px 0px 6px rgba(16, 185, 129, 0.3));
+        }
+        50% {
+          fill-opacity: 0.55;
+          filter: drop-shadow(0px 0px 18px rgba(52, 211, 153, 0.8));
+        }
+      }
+
+      /* 2. Inner Core Area: Alternating Blue and Emerald */
+      @keyframes alternateBlueEmerald {
+        0%, 100% {
+          fill: #38BDF8;
+          fill-opacity: 0.25;
+          filter: drop-shadow(0px 0px 8px rgba(56, 189, 248, 0.5));
+        }
+        50% {
+          fill: #10B981;
+          fill-opacity: 0.5;
+          filter: drop-shadow(0px 0px 14px rgba(16, 185, 129, 0.7));
+        }
+      }
+
+      /* 3. Central Dot: Alternating Blue and Red */
+      @keyframes alternateBlueRed {
+        0%, 100% {
+          fill: #38BDF8;
+          filter: drop-shadow(0px 0px 6px rgba(56, 189, 248, 0.9));
+        }
+        50% {
+          fill: #EF4444;
+          filter: drop-shadow(0px 0px 12px rgba(239, 68, 68, 1));
+        }
+      }
+
+      /* 4. Clockwise Continuous Rotation for Dotted Orbital Ring */
+      @keyframes rotateClockwise {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .anim-outer-emerald {
+        animation: pulseEmeraldField 2.4s ease-in-out infinite;
+      }
+
+      .anim-inner-blue-emerald {
+        animation: alternateBlueEmerald 2.4s ease-in-out infinite;
+      }
+
+      .anim-dot-blue-red {
+        animation: alternateBlueRed 2.4s ease-in-out infinite;
+      }
+
+      .anim-rotating-dots {
+        transform-origin: 150px 135px;
+        animation: rotateClockwise 12s linear infinite;
+      }
+    </style>
+
+    <!-- Multi-Stop Gradient for Main Inner Ring -->
+    <linearGradient id="sentinelGradUpgraded" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10B981" />
+      <stop offset="50%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+
+    <!-- Multi-Stop Integrated Gradient for Dotted Orbit Ring -->
+    <linearGradient id="dottedOrbitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34D399" />   <!-- Bright Emerald -->
+      <stop offset="50%" stop-color="#38BDF8" />  <!-- Cyber Cyan -->
+      <stop offset="100%" stop-color="#60A5FA" /> <!-- Soft Blue -->
+    </linearGradient>
+
+    <!-- MASK 1: Outer Area (Between Outer Shield and Dotted Ring r=68) -->
+    <mask id="shieldOuterInterstitialMask">
+      <path d="M 150 20 C 225 20, 270 50, 270 120 C 270 210, 175 285, 150 300 C 125 285, 30 210, 30 120 C 30 50, 75 20, 150 20 Z" fill="#FFFFFF" />
+      <circle cx="150" cy="135" r="68" fill="#000000" />
+    </mask>
+
+    <!-- MASK 2: Inner Core Area (Between Inner Ring r=42 and Central Dot r=8) -->
+    <mask id="innerCoreZoneMask">
+      <circle cx="150" cy="135" r="42" fill="#FFFFFF" />
+      <circle cx="150" cy="135" r="8" fill="#000000" />
+    </mask>
+  </defs>
+
+  <g transform="translate(100, 75)">
+    
+    <!-- ZONE 1: OUTER EMERALD ANIMATED FIELD -->
+    <path class="anim-outer-emerald"
+          mask="url(#shieldOuterInterstitialMask)"
+          d="M 150 20 C 225 20, 270 50, 270 120 C 270 210, 175 285, 150 300 C 125 285, 30 210, 30 120 C 30 50, 75 20, 150 20 Z" 
+          fill="#10B981" />
+
+    <!-- ZONE 2: INNER CORE ANIMATED FIELD (Blue <-> Emerald) -->
+    <circle class="anim-inner-blue-emerald"
+            mask="url(#innerCoreZoneMask)"
+            cx="150" cy="135" r="42" />
+
+    <!-- STATIC OUTER SHIELD STROKE -->
+    <path d="M 150 20 C 225 20, 270 50, 270 120 C 270 210, 175 285, 150 300 C 125 285, 30 210, 30 120 C 30 50, 75 20, 150 20 Z" 
+          fill="none" 
+          stroke="#10B981" 
+          stroke-width="16" 
+          stroke-linecap="round" 
+          stroke-linejoin="round" />
+
+    <!-- ZONE 4: CLOCKWISE ROTATING DOTTED ORBITAL RING (Integrated Gradient) -->
+    <circle class="anim-rotating-dots"
+            cx="150" cy="135" r="66" 
+            fill="none" 
+            stroke="url(#dottedOrbitGrad)" 
+            stroke-width="3.5" 
+            stroke-dasharray="4 16" 
+            stroke-linecap="round"
+            opacity="0.9" />
+
+    <!-- INNER TELEMETRY RING STROKE -->
+    <circle cx="150" cy="135" r="48" 
+            fill="none" 
+            stroke="url(#sentinelGradUpgraded)" 
+            stroke-width="12" />
+
+    <!-- ZONE 3: ANIMATED CENTRAL DOT (Blue <-> Red) -->
+    <circle class="anim-dot-blue-red" cx="150" cy="135" r="8" />
+
+  </g>
+</svg>

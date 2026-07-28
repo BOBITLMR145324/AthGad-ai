@@ -1,0 +1,19 @@
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Python compiled files
+__pycache__/
+*.py[cod]
+
+# Environment variables & API keys
+.env
+
+# SQLite Database / Local DB files
+*.db
+*.sqlite3
+
+# OS metadata
+.DS_Store
+Thumbs.db

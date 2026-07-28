@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EarthGuard AI - Proactive Environmental Mitigation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased min-h-screen flex flex-col justify-between">
+
+    <header class="border-b border-slate-900 bg-slate-950/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+    <!-- Explicit Sized Container for Logo -->
+    <div class="w-8 h-8 flex-shrink-0 flex items-center justify-center">
+        {% include '_logo.html' %}
+    </div>
+    <span class="text-white font-black tracking-wider text-xl uppercase">EarthGuard AI</span>
+</div>
+        <div class="flex items-center gap-4">
+            <a href="/login" class="text-sm font-semibold text-slate-300 hover:text-white transition">Sign In</a>
+            <a href="/register" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition shadow-md shadow-emerald-950/30">Get Started</a>
+        </div>
+    </header>
+
+    <main class="flex-grow flex items-center justify-center px-6 py-12 max-w-6xl mx-auto w-full">
+        <div class="grid md:grid-cols-2 gap-12 items-center">
+            
+            <div class="space-y-6">
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/50 text-emerald-400 border border-emerald-900/60">
+                    🚀 Live Production Cycle (Q2 2026 Tracking Window)
+                </span>
+                <h1 class="text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
+                    Predicting Environmental Crisis, <span class="text-emerald-400">Deploying Proactive Action.</span>
+                </h1>
+                <p class="text-slate-400 text-base leading-relaxed">
+                    EarthGuard AI turns environmental data into early warnings—protecting farms and communities in Eastern Kenya before disasters strike.
+                </p>
+                
+                <div class="pt-4 flex flex-wrap gap-4">
+                    <a href="/register" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-6 py-3.5 rounded-xl transition shadow-lg text-sm uppercase tracking-wider">
+                        Create an Alert Profile
+                    </a>
+                    <a href="/telemetry" class="border border-slate-700 hover:border-emerald-500/50 hover:bg-slate-900/50 text-slate-300 font-bold px-6 py-3 rounded-xl text-sm transition duration-200 flex items-center justify-center gap-2">
+    <span>Explore Live System Factors</span>
+    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+    </svg>
+</a>
+                </div>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative overflow-hidden group">
+                <div class="absolute -right-16 -top-16 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl"></div>
+                <h3 class="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-4">Active System Signals</h3>
+                <div class="space-y-4 font-mono text-xs text-slate-400">
+                    <div class="flex justify-between border-b border-slate-800 pb-2"><span>[+] Climate Severity Vector:</span> <span class="text-white">0.649 (Aggressive)</span></div>
+                    <div class="flex justify-between border-b border-slate-800 pb-2"><span>[+] Outbreak Analytics Speed:</span> <span class="text-white">Stable Baseline</span></div>
+                    <div class="flex justify-between border-b border-slate-800 pb-2"><span>[+] Isolation Forest Factor:</span> <span class="text-emerald-400">0.023 (Drift Alert)</span></div>
+                    <div class="flex justify-between"><span>[+] Matrix Status:</span> <span class="text-emerald-400 animate-pulse">● Connected</span></div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <footer class="border-t border-slate-900 py-6 text-center text-slate-500 text-xs bg-slate-950">
+        &copy; 2026 EarthGuard AI Framework Ecosystem. Protected under Regional Operations Protocols.
+    </footer>
+
+</body>
+</html>

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Regional Intelligence - EarthGuard AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased">
+
+    <!-- Header Navigation -->
+    <header class="border-b border-slate-800 bg-slate-950/80 backdrop-blur-md p-4 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            
+            <!-- Brand -->
+            <a href="/" class="flex items-center space-x-3">
+                <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center">
+                    {% include '_logo.html' %}
+                </div>
+                <div>
+                    <h1 class="text-xl font-black tracking-wider text-emerald-400 uppercase">EARTHGUARD AI</h1>
+                    <p class="text-[10px] text-slate-400 font-medium">Public Early Warning Intelligence</p>
+                </div>
+            </a>
+
+            <!-- Navigation Controls -->
+            <div class="flex items-center space-x-4">
+                <a href="/subscribe" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2 rounded-lg text-xs tracking-wider uppercase transition shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                    Get SMS Alerts
+                </a>
+                <a href="/login" class="text-slate-300 hover:text-white font-semibold text-xs tracking-wider uppercase px-3 py-2 border border-slate-800 rounded-lg hover:bg-slate-900 transition">
+                    Sign In
+                </a>
+            </div>
+
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-8 space-y-10">
+
+        <!-- Page Intro Hero -->
+        <div class="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-slate-800/80 pb-8">
+            <div>
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold mb-3">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Real-Time Environmental Data Syncing
+                </div>
+                <h1 class="text-3xl md:text-4xl font-extrabold text-white tracking-tight">Regional Risk & Health Factors</h1>
+                <p class="text-slate-400 text-sm md:text-base mt-2 max-w-2xl">
+                    Real-time monitoring of early drought indicators, rainfall anomalies, and livestock/human health vectors across Eastern Kenya counties.
+                </p>
+            </div>
+
+            <!-- Global Risk Summary Card -->
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex items-center gap-5 min-w-[280px]">
+                <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                </div>
+                <div>
+                    <span class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Regional Alert Status</span>
+                    <h2 class="text-lg font-bold text-amber-400">Elevated Vigilance</h2>
+                    <p class="text-xs text-slate-400">{{ high_risk_count }} Counties Facing High Alert</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 1: DETECTED DYNAMIC HAZARDS (HEALTH & CLIMATE) -->
+        <section class="space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-xl font-extrabold text-white flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                    Detected Active Hazards & Projections
+                </h2>
+                <span class="text-xs text-slate-500">Updated: {{ last_sync }}</span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                <!-- Dynamic Climate Hazard Card -->
+                <div class="bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/30 border border-amber-500/30 rounded-2xl p-6 relative overflow-hidden space-y-4 shadow-xl">
+                    <div class="flex items-start justify-between">
+                        <div class="space-y-1">
+                            <span class="px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-300 text-xs font-extrabold uppercase tracking-wider border border-amber-500/30">
+                                Climate Risk
+                            </span>
+                            <h3 class="text-lg font-bold text-white pt-2">Multi-Season Precipitation Deficit</h3>
+                        </div>
+                        <span class="text-2xl font-black text-amber-400">{{ avg_climate }}%</span>
+                    </div>
+
+                    <p class="text-xs text-slate-300 leading-relaxed">
+                        Satellite vegetation index indicates severe soil moisture depletion. Ground water table levels in Kitui and Makueni are currently below historic seasonal baselines.
+                    </p>
+
+                    <div class="grid grid-cols-2 gap-3 pt-2 text-xs border-t border-slate-800/80">
+                        <div>
+                            <span class="text-slate-400 block">Primary Target</span>
+                            <strong class="text-slate-200">Kitui, Makueni & Machakos</strong>
+                        </div>
+                        <div>
+                            <span class="text-slate-400 block">Predicted Impact</span>
+                            <strong class="text-amber-400">Crop Failure Risk (3-4 wks)</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dynamic Health Hazard Card -->
+                <div class="bg-gradient-to-br from-slate-900 via-slate-900 to-rose-950/30 border border-rose-500/30 rounded-2xl p-6 relative overflow-hidden space-y-4 shadow-xl">
+                    <div class="flex items-start justify-between">
+                        <div class="space-y-1">
+                            <span class="px-2.5 py-1 rounded-md bg-rose-500/20 text-rose-300 text-xs font-extrabold uppercase tracking-wider border border-rose-500/30">
+                                Health Vector Alert
+                            </span>
+                            <h3 class="text-lg font-bold text-white pt-2">Waterborne Disease & Vector Surge</h3>
+                        </div>
+                        <span class="text-2xl font-black text-rose-400">{{ avg_health }}%</span>
+                    </div>
+
+                    <p class="text-xs text-slate-300 leading-relaxed">
+                        Concentration of livestock at drying water holes has created high-density vector breeding zones. Increased risk of water contamination and localized pest outbreaks reported.
+                    </p>
+
+                    <div class="grid grid-cols-2 gap-3 pt-2 text-xs border-t border-slate-800/80">
+                        <div>
+                            <span class="text-slate-400 block">Primary Target</span>
+                            <strong class="text-slate-200">Marsabit & Isiolo</strong>
+                        </div>
+                        <div>
+                            <span class="text-slate-400 block">Recommended Action</span>
+                            <strong class="text-rose-400">Water Purification Push</strong>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- SECTION 2: DYNAMIC COUNTY STATUS BOARD GRID -->
+        <section class="space-y-6">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-xl font-extrabold text-white">Eastern Kenya Coverage Board</h2>
+                    <p class="text-xs text-slate-400 mt-1">Live status calculations per county based on regional satellite and community feeds.</p>
+                </div>
+
+                <!-- Interactive Filters -->
+                <div class="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0">
+                    <button onclick="filterCounties('all')" id="btn-all" class="filter-btn active bg-emerald-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs transition">All Counties</button>
+                    <button onclick="filterCounties('high')" id="btn-high" class="filter-btn bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-medium transition">High Risk</button>
+                    <button onclick="filterCounties('climate')" id="btn-climate" class="filter-btn bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-medium transition">Climate Focus</button>
+                    <button onclick="filterCounties('health')" id="btn-health" class="filter-btn bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-medium transition">Health Focus</button>
+                </div>
+            </div>
+
+            <!-- Dynamic County Grid Loop -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5" id="county-grid">
+                {% for item in status_board %}
+                <div class="county-card {{ 'high' if item.risk_level == 'High' else '' }} {{ item.threat_category }} bg-slate-900/80 hover:bg-slate-900 border {{ 'border-amber-500/40' if item.risk_level == 'High' else ('border-rose-500/40' if item.threat_category == 'health' else 'border-slate-800') }} rounded-2xl p-5 space-y-4 transition duration-200">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="font-bold text-white text-base">{{ item.county }} County</h3>
+                            <span class="text-[11px] text-slate-400">Eastern Region</span>
+                        </div>
+                        <span class="px-2 py-0.5 rounded {{ 'bg-amber-500/20 text-amber-300 border-amber-500/30' if item.risk_level == 'High' else ('bg-rose-500/20 text-rose-300 border-rose-500/30' if item.risk_level == 'Medium' else 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30') }} font-bold text-[10px] uppercase border">
+                            {{ item.risk_level }}
+                        </span>
+                    </div>
+                    <div class="space-y-2">
+                        <div class="flex justify-between text-xs">
+                            <span class="text-slate-400">Calculated Risk Index</span>
+                            <span class="font-bold {{ 'text-amber-400' if item.risk_level == 'High' else ('text-rose-400' if item.risk_level == 'Medium' else 'text-emerald-400') }}">{{ item.score_pct }}%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                        <div class="{{ 'bg-amber-400' if item.risk_level == 'High' else ('bg-rose-400' if item.risk_level == 'Medium' else 'bg-emerald-400') }} h-full rounded-full w-[{{ item.score_pct }}%]"></div>
+                        </div>
+                    </div>
+                    <div class="text-[11px] text-slate-400 pt-2 border-t border-slate-800 flex justify-between">
+                        <span>Threat: {{ item.primary_threat }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <!-- CTA Callout for Non-Logged-In Users -->
+        <section class="bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-2xl">
+            <div class="space-y-2 text-center md:text-left">
+                <h3 class="text-2xl font-black text-white">Want SMS Risk Advisories Sent To Your Phone?</h3>
+                <p class="text-slate-300 text-sm max-w-xl">
+                    Get early warnings sent directly via SMS before crisis points strike your local farm or community.
+                </p>
+            </div>
+            <a href="/subscribe" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-6 py-3.5 rounded-xl text-sm uppercase tracking-wider transition transform hover:scale-105 flex-shrink-0">
+                Subscribe For Free Alerts
+            </a>
+        </section>
+
+    </main>
+
+    <!-- Filter Script -->
+    <script>
+        function filterCounties(type) {
+            const cards = document.querySelectorAll('.county-card');
+            const buttons = document.querySelectorAll('.filter-btn');
+
+            buttons.forEach(btn => {
+                btn.classList.remove('bg-emerald-500', 'text-slate-950', 'font-bold');
+                btn.classList.add('bg-slate-900', 'text-slate-300', 'font-medium');
+            });
+
+            const activeBtn = document.getElementById('btn-' + type);
+            if(activeBtn) {
+                activeBtn.classList.add('bg-emerald-500', 'text-slate-950', 'font-bold');
+                activeBtn.classList.remove('bg-slate-900', 'text-slate-300');
+            }
+
+            cards.forEach(card => {
+                if (type === 'all') {
+                    card.style.display = 'block';
+                } else if (card.classList.contains(type)) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+    </script>
+</body>
+</html>

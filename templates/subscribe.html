@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EarthGuard AI - Upgrade to Premium Alerts</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
+        
+        <!-- Header Section -->
+        <div class="mb-6">
+            <h2 class="text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
+                <!-- Logo Icon Container -->
+                <div class="w-7 h-7 flex-shrink-0 flex items-center justify-center">
+                    {% include '_logo.html' %}
+                </div>
+                Upgrade to EarthGuard Premium
+            </h2>
+            <p class="text-slate-400 text-sm mt-1">Choose how you want to receive your real-time risk alerts.</p>
+        </div>
+
+        <!-- Flash Alert Messages Block -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div id="flash-alerts-wrapper" class="mb-6 space-y-2">
+                    {% for category, message in messages %}
+                        <div class="flash-alert p-3 rounded-xl text-xs font-semibold flex items-center justify-between transition-opacity duration-500 opacity-100
+                            {% if category == 'error' %} bg-rose-950/60 border border-rose-800 text-rose-300
+                            {% elif category == 'info' %} bg-sky-950/60 border border-sky-800 text-sky-300
+                            {% else %} bg-emerald-950/60 border border-emerald-800 text-emerald-300 {% endif %}">
+                            <span>{{ message }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <!-- Dynamic Subscription Status Banner -->
+        {% set payment_status = status.payment_status if status and status.payment_status is defined else (status['payment_status'] if status and 'payment_status' in status else 'trialing') %}
+        
+        {% if payment_status == 'active' %}
+            <div class="bg-emerald-950/40 border border-emerald-900/60 rounded-xl p-4 mb-6 text-xs text-emerald-300 leading-relaxed">
+                <strong>✅ Premium Subscription Active:</strong> Your profile is currently fully unlocked across both SMS and Email telemetry channels.
+            </div>
+        {% elif payment_status == 'expired' %}
+            <div class="bg-amber-950/40 border border-amber-900/60 rounded-xl p-4 mb-6 text-xs text-amber-300 leading-relaxed">
+                <strong>⏳ Evaluation Period Expired:</strong> Your 30-day free trial has concluded. Submit this form to trigger an automatic <strong>M-PESA STK Push</strong> to your registered mobile phone.
+            </div>
+        {% else %}
+            <div class="bg-emerald-950/40 border border-emerald-900/60 rounded-xl p-4 mb-6 text-xs text-emerald-300 leading-relaxed">
+                <strong>🎁 Developer Evaluation License Active:</strong> Your profile qualifies for <strong class="text-white underline decoration-emerald-400">1 Month of Free Unlimited Alerts</strong>. Afterwards, a baseline operating fee of 150 KES/month applies.
+            </div>
+        {% endif %}
+
+        <form action="/subscribe" method="POST" class="space-y-6">
+            
+            <!-- Notification Methods Selection -->
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">1. Choose Your Notification Methods (Select all that apply)</label>
+                <div class="grid grid-cols-2 gap-4">
+                    
+                    <!-- SMS Checkbox -->
+                    <label class="border border-slate-800 bg-slate-950/60 rounded-xl p-4 flex flex-col gap-1 cursor-pointer hover:border-emerald-600 transition">
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" name="dispatch_medium" value="sms" 
+                                   {% if status and ((status.subscribe_sms is defined and status.subscribe_sms) or ('subscribe_sms' in status and status['subscribe_sms'])) %}checked{% endif %}
+                                   class="rounded border-slate-800 bg-slate-950 text-emerald-500 focus:ring-0 focus:ring-offset-0">
+                            <span class="text-white font-semibold text-sm">SMS Alerts</span>
+                        </div>
+                        <span class="text-slate-400 text-[11px] ml-5">Direct emergency text alerts pushed to your mobile device.</span>
+                    </label>
+                    
+                    <!-- Email Checkbox -->
+                    <label class="border border-slate-800 bg-slate-950/60 rounded-xl p-4 flex flex-col gap-1 cursor-pointer hover:border-emerald-600 transition">
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" name="dispatch_medium" value="email" 
+                                   {% if status and ((status.subscribe_email is defined and status.subscribe_email) or ('subscribe_email' in status and status['subscribe_email'])) %}checked{% endif %}
+                                   class="rounded border-slate-800 bg-slate-950 text-emerald-500 focus:ring-0 focus:ring-offset-0">
+                            <span class="text-white font-semibold text-sm">Email Telemetry</span>
+                        </div>
+                        <span class="text-slate-400 text-[11px] ml-5">Comprehensive analytical risk charts and parameters sent straight to your inbox.</span>
+                    </label>
+
+                </div>
+            </div>
+
+            <!-- Payment & Currency Options -->
+            <div class="grid md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">2. Currency</label>
+                    <select name="currency" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        <option value="KES">KES - Kenyan Shilling (Local)</option>
+                        <option value="USD">USD - US Dollar (Global)</option>
+                        <option value="EUR">EUR - Euro Portfolio</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">3. Payment Method</label>
+                    <select name="payment_method" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        <option value="mpesa">M-PESA Express (STK Push)</option>
+                        <option value="card">Credit / Debit Card</option>
+                        <option value="airtime">Carrier Airtime Deduction</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Pricing Metrics Card -->
+            <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-4 text-xs space-y-2 text-slate-400">
+                <div class="flex justify-between text-slate-200 font-semibold">
+                    <span>Billing Status:</span> 
+                    <span class="text-emerald-400 font-bold">
+                        {% if payment_status == 'active' %}PAID (Active Subscription)
+                        {% elif payment_status == 'expired' %}PAYMENT REQUIRED
+                        {% else %}TRIAL (30 Days Free){% endif %}
+                    </span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Recurring Premium:</span> 
+                    <span>150 KES / $1.50 Monthly</span>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex flex-col sm:flex-row gap-3 pt-2">
+                <a href="/dashboard" class="flex-1 border border-slate-800 hover:bg-slate-800 text-slate-300 font-bold flex items-center justify-center py-3 rounded-lg text-xs uppercase tracking-wider transition">
+                    Return to Dashboard
+                </a>
+                <button type="submit" class="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold flex items-center justify-center py-3 rounded-lg text-xs uppercase tracking-wider transition shadow-lg shadow-emerald-950/20 cursor-pointer">
+                    {% if payment_status == 'expired' %}
+                        Pay 150 KES via M-PESA
+                    {% else %}
+                        Update Preferences
+                    {% endif %}
+                </button>
+            </div>
+            
+        </form>
+    </div>
+
+    <!-- 2-Second Auto-Dismiss Script for Flash Alerts -->
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const alerts = document.querySelectorAll(".flash-alert");
+            
+            if (alerts.length > 0) {
+                setTimeout(() => {
+                    alerts.forEach(alert => {
+                        // Fade out opacity
+                        alert.classList.replace("opacity-100", "opacity-0");
+                        
+                        // Wait for 500ms transition fade to finish, then remove element from layout
+                        setTimeout(() => {
+                            alert.remove();
+                        }, 500);
+                    });
+                }, 2000); // 2000ms = 2 seconds
+            }
+        });
+    </script>
+</body>
+</html>
