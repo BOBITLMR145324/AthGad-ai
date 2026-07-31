@@ -1,135 +1,274 @@
-<!DOCTYPE html>
+<!doctype html>
+
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
     <title>Alert Vector Registration - EarthGuard AI</title>
+
     <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-slate-900 text-slate-100 font-sans min-h-screen flex flex-col justify-center items-center p-4">
+  </head>
 
-    <div class="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl p-8 space-y-6">
-        
-        <div class="text-center space-y-2">
-            <!-- Centered Brand Container with Logo -->
-            <div class="flex items-center justify-center gap-2.5">
-                <div class="w-8 h-8 flex-shrink-0 flex items-center justify-center">
-                    {% include '_logo.html' %}
-                </div>
-                <h1 class="text-2xl font-black tracking-wider text-emerald-400">EARTHGUARD AI</h1>
-            </div>
+  <body
+    class="bg-slate-900 text-slate-100 font-sans min-h-screen flex flex-col justify-center items-center p-4"
+  >
+    <div
+      class="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl p-8 space-y-6"
+    >
+      <div class="text-center space-y-2">
+        <!-- Centered Brand Container with Logo -->
 
-            <!-- Subtitle -->
-            <p class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Crisis Alert Registration Profile</p>
+        <div class="flex items-center justify-center gap-2.5">
+          <div class="w-8 h-8 flex-shrink-0 flex items-center justify-center">
+            {% include '_logo.html' %}
+          </div>
+
+          <h1 class="text-2xl font-black tracking-wider text-emerald-400">
+            EARTHGUARD AI
+          </h1>
         </div>
 
-        <!-- Flash Messages Container -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <div id="flash-alerts-wrapper" class="space-y-2 mb-4">
-                    {% for category, message in messages %}
-                        {% if "Invalid email" not in message and "tracking link severed" not in message and "both your email" not in message %}
-                            <div class="flash-alert p-4 rounded-xl text-xs font-medium leading-relaxed border transition-opacity duration-500 opacity-100 {% if category == 'warning' or category == 'error' %} bg-rose-950/40 border-rose-800 text-rose-300 {% else %} bg-emerald-950/40 border-emerald-800 text-emerald-300 {% endif %}" {% if category == 'warning' %}data-persistent="true"{% endif %}>
-                                <p class="font-bold mb-1">
-                                    {% if category == 'warning' %}Account Match Detected:{% elif category == 'error' %}Validation Halt:{% else %}Success Confirmation:{% endif %}
-                                </p>
-                                {{ message }}
-                                
-                                {% if category == 'warning' %}
-                                    <div class="mt-2.5">
-                                        <a href="/login" class="inline-block bg-amber-600 hover:bg-amber-500 text-white font-bold py-1 px-3 rounded text-[11px] transition">Proceed to Login Direct →</a>
-                                    </div>
-                                {% endif %}
-                            </div>
-                        {% endif %}
-                    {% endfor %}
-                </div>
-            {% endif %}
-        {% endwith %}
+        <!-- Subtitle -->
 
-        <!-- Registration Form -->
-        <form action="/register" method="POST" class="space-y-4">
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Full Name</label>
-                <input type="text" name="full_name" required placeholder="Samuel Mutuku" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition">
-            </div>
+        <p
+          class="text-xs text-slate-400 uppercase tracking-widest font-semibold"
+        >
+          Crisis Alert Registration Profile
+        </p>
+      </div>
 
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Email Address</label>
-                <input type="email" name="email" required placeholder="samuel@example.com" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition">
-            </div>
+      <!-- Flash Messages Container -->
 
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Phone Number</label>
-                <input type="tel" name="phone_number" required placeholder="+254700000000" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition">
-                <p class="text-[10px] text-slate-500 mt-1">Staged target destination for system routing protocols.</p>
-            </div>
+      {% with messages = get_flashed_messages(with_categories=true) %} {% if
+      messages %}
 
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Secure Password</label>
-                <input type="password" name="password" required placeholder="••••••••" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition">
-            </div>
+      <div id="flash-alerts-wrapper" class="space-y-2 mb-4">
+        {% for category, message in messages %} {% if "Invalid email" not in
+        message and "tracking link severed" not in message and "both your email"
+        not in message %}
 
-            <hr class="border-slate-800 my-4">
+        <div
+          class="flash-alert p-4 rounded-xl text-xs font-medium leading-relaxed border transition-opacity duration-500 opacity-100 {% if category == 'warning' or category == 'error' %} bg-rose-950/40 border-rose-800 text-rose-300 {% else %} bg-emerald-950/40 border-emerald-800 text-emerald-300 {% endif %}"
+          {% if category == 'warning' %}data-persistent="true"{% endif %}
+        >
+          <p class="font-bold mb-1">
+            {% if category == 'warning' %}Account Match Detected:{% elif
+            category == 'error' %}Validation Halt:{% else %}Success
+            Confirmation:{% endif %}
+          </p>
 
-            <div class="space-y-4">
-                <div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3.5 text-xs text-slate-400 leading-relaxed">
-                    <div class="flex items-center gap-1.5 font-semibold text-slate-200 mb-1">
-                        <span class="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
-                        Alert Gateway Notice
-                    </div>
-                    Real-time push telemetry updates for regional crisis mitigations are managed directly via your control dashboard. You can configure and activate your routing channel preferences immediately after account creation.
-                </div>
+          {{ message }} {% if category == 'warning' %}
 
-                <div class="flex items-start space-x-3">
-                    <div class="flex items-center h-5">
-                        <input id="receive_email" name="receive_email" type="checkbox" class="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-0 cursor-pointer">
-                    </div>
-                    <div class="text-xs">
-                        <label for="receive_email" class="font-semibold text-slate-200 cursor-pointer">Enable Baseline System Updates</label>
-                        <p class="text-slate-400 text-[11px]">Opt-in to receive structural analytics summaries directly in your inbox.</p>
-                    </div>
-                </div>
-            </div>
+          <div class="mt-2.5">
+            <a
+              href="/login"
+              class="inline-block bg-amber-600 hover:bg-amber-500 text-white font-bold py-1 px-3 rounded text-[11px] transition"
+              >Proceed to Login Direct →</a
+            >
+          </div>
 
-            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-lg transition text-sm cursor-pointer mt-4 shadow-lg shadow-emerald-950/20">
-                Create Account & Proceed
-            </button>
-        </form>
-
-        <!-- Toggle to Login Link -->
-        <div class="mt-6 text-center text-sm border-t border-slate-800/60 pt-5">
-            <span class="text-slate-400">Already have an account?</span>
-            <a href="/login" class="text-emerald-400 hover:text-emerald-300 font-semibold ml-1 transition">Sign in instead</a>
+          {% endif %}
         </div>
+
+        {% endif %} {% endfor %}
+      </div>
+
+      {% endif %} {% endwith %}
+
+      <!-- Registration Form -->
+
+      <form action="/register" method="POST" class="space-y-4">
+        <div>
+          <label
+            class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
+            >Full Name</label
+          >
+
+          <input
+            type="text"
+            name="full_name"
+            required
+            placeholder="Samuel Mutuku"
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+          />
+        </div>
+
+        <div>
+          <label
+            class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
+            >Email Address</label
+          >
+
+          <input
+            type="email"
+            name="email"
+            required
+            placeholder="samuel@example.com"
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+          />
+        </div>
+
+        <div>
+          <label
+            class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
+            >Phone Number</label
+          >
+
+          <input
+            type="tel"
+            name="phone_number"
+            required
+            placeholder="+254700000000"
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+          />
+
+          <p class="text-[10px] text-slate-500 mt-1">
+            Staged target destination for system routing protocols.
+          </p>
+        </div>
+
+        <div>
+          <label
+            class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
+            >Secure Password</label
+          >
+
+          <input
+            type="password"
+            name="password"
+            required
+            placeholder="••••••••"
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+          />
+        </div>
+
+        <hr class="border-slate-800 my-4" />
+
+        <div class="space-y-4">
+          <div
+            class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3.5 text-xs text-slate-400 leading-relaxed"
+          >
+            <div
+              class="flex items-center gap-1.5 font-semibold text-slate-200 mb-1"
+            >
+              <span
+                class="h-2 w-2 rounded-full bg-amber-500 animate-pulse"
+              ></span>
+
+              Alert Gateway Notice
+            </div>
+
+            Real-time push telemetry updates for regional crisis mitigations are
+            managed directly via your control dashboard. You can configure and
+            activate your routing channel preferences immediately after account
+            creation.
+          </div>
+
+          <div class="flex items-start space-x-3">
+            <div class="flex items-center h-5">
+              <input
+                id="receive_email"
+                name="receive_email"
+                type="checkbox"
+                class="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-0 cursor-pointer"
+              />
+            </div>
+
+            <div class="text-xs">
+              <label
+                for="receive_email"
+                class="font-semibold text-slate-200 cursor-pointer"
+                >Enable Baseline Email Updates</label
+              >
+
+              <p class="text-slate-400 text-[11px]">
+                Opt-in to receive structural analytics summaries directly in
+                your inbox.
+              </p>
+            </div>
+          </div>
+
+          <div class="flex items-start space-x-3">
+            <div class="flex items-center h-5">
+              <input
+                id="receive_sms"
+                name="receive_sms"
+                type="checkbox"
+                checked
+                class="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-0 cursor-pointer"
+              />
+            </div>
+
+            <div class="text-xs">
+              <label
+                for="receive_sms"
+                class="font-semibold text-slate-200 cursor-pointer"
+                >Enable SMS Alert Delivery</label
+              >
+
+              <p class="text-slate-400 text-[11px]">
+                Receive real-time risk SMS alerts directly to your phone for
+                your county.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-lg transition text-sm cursor-pointer mt-4 shadow-lg shadow-emerald-950/20"
+        >
+          Create Account & Proceed
+        </button>
+      </form>
+
+      <!-- Toggle to Login Link -->
+
+      <div class="mt-6 text-center text-sm border-t border-slate-800/60 pt-5">
+        <span class="text-slate-400">Already have an account?</span>
+
+        <a
+          href="/login"
+          class="text-emerald-400 hover:text-emerald-300 font-semibold ml-1 transition"
+          >Sign in instead</a
+        >
+      </div>
     </div>
-    
+
     <div class="text-center pt-4">
-        <a href="/" class="text-xs text-slate-500 hover:text-slate-300 transition">← Cancel and Return to Gateway Analytics</a>
+      <a href="/" class="text-xs text-slate-500 hover:text-slate-300 transition"
+        >← Cancel and Return to Gateway Analytics</a
+      >
     </div>
 
     <!-- Auto-Dismiss Script for Flash Alerts -->
-    <script>
-        document.addEventListener("DOMContentLoaded", () => {
-            const alerts = document.querySelectorAll(".flash-alert");
-            
-            if (alerts.length > 0) {
-                setTimeout(() => {
-                    alerts.forEach(alert => {
-                        // Skip auto-dismiss if notification requires user interaction (e.g. Account Match warning)
-                        if (alert.dataset.persistent === "true") return;
 
-                        // Fade out opacity
-                        alert.classList.replace("opacity-100", "opacity-0");
-                        
-                        // Remove element after fade completes
-                        setTimeout(() => {
-                            alert.remove();
-                        }, 500);
-                    });
-                }, 2000); // 2000ms = 2 seconds
-            }
-        });
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const alerts = document.querySelectorAll(".flash-alert");
+
+        if (alerts.length > 0) {
+          setTimeout(() => {
+            alerts.forEach((alert) => {
+              // Skip auto-dismiss if notification requires user interaction (e.g. Account Match warning)
+
+              if (alert.dataset.persistent === "true") return;
+
+              // Fade out opacity
+
+              alert.classList.replace("opacity-100", "opacity-0");
+
+              // Remove element after fade completes
+
+              setTimeout(() => {
+                alert.remove();
+              }, 500);
+            });
+          }, 2000); // 2000ms = 2 seconds
+        }
+      });
     </script>
-</body>
+  </body>
 </html>

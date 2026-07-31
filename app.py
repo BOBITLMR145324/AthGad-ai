@@ -259,6 +259,7 @@ def handle_registration():
     phone_number = request.form.get('phone_number', '').strip()
     password = request.form.get('password', '')
     receive_email = 'receive_email' in request.form
+    receive_sms = 'receive_sms' in request.form
 
     if not full_name or not email or not phone_number or not password:
         flash("All fields are required to establish an alert profile.", "error")
@@ -279,13 +280,14 @@ def handle_registration():
         with engine.begin() as connection:
             connection.execute(text("""
                 INSERT INTO users (full_name, email, phone_number, password_hash, receive_email, is_subscribed, subscribe_sms, subscribe_email, dispatch_preference)
-                VALUES (:name, :email, :phone, :hash, :email_opt, False, False, False, 'sms');
+                VALUES (:name, :email, :phone, :hash, :email_opt, :sms_opt, :sms_opt, :email_opt, 'sms');
             """), {
                 "name": full_name,
                 "email": email,
                 "phone": phone_number,
                 "hash": hashed_password,
-                "email_opt": receive_email
+                "email_opt": receive_email,
+                "sms_opt": receive_sms
             })
 
         session['user_email'] = email
@@ -545,18 +547,13 @@ def web_unsubscribe():
 @app.route('/api/v1/sms/callback', methods=['POST'])
 def incoming_sms_callback():
     """
-    Listens for webhook payloads dispatched from the Infobip SMS gateway.
+    Listens for webhook payloads dispatched from the Africa's Talking SMS gateway.
     Converts incoming parameters and checks for opt-out codes (STOP).
-    Accepts both Infobip's JSON format (sender, message) and URL-encoded fallback (from, text).
+    Africa's Talking sends form-encoded POST data with: from, text, date, id, linkId.
     """
-    # Try parsing JSON body first (Infobip's default format), fall back to form data
-    json_data = request.get_json(silent=True)
-    if json_data:
-        from_number = json_data.get("from", json_data.get("sender", "")).strip()
-        text_content = json_data.get("text", json_data.get("message", "")).strip().upper()
-    else:
-        from_number = request.form.get("from", request.form.get("From", "")).strip()
-        text_content = request.form.get("text", request.form.get("Body", "")).strip().upper()
+    # Africa's Talking delivers webhooks as form-encoded POST parameters
+    from_number = request.form.get("from", "").strip()
+    text_content = request.form.get("text", "").strip().upper()
 
     print(f"\n📥 [WEBHOOK SIGNAL] Incoming SMS Gateway event triggered -> From: {from_number} Content: '{text_content}'")
 
@@ -611,7 +608,7 @@ def incoming_sms_callback():
             print(f"❌ Webhook subscriber execution failed: {e}")
             return jsonify({"status": "database_error", "message": str(e)}), 500
 
-    # Return 200 OK to acknowledge receipt of the webhook from Infobip
+    # Return 200 OK to acknowledge receipt of the webhook from Africa's Talking
     return jsonify({"status": "received"}), 200
 
 if __name__ == '__main__':

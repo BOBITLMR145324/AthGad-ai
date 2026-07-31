@@ -2,7 +2,9 @@ import os
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 
-load_dotenv('config/.env')
+# Load .env from config directory with robust path resolution
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', '.env')
+load_dotenv(dotenv_path)
 
 # Extract connection parameters safely
 DB_USER = os.getenv("DB_USER", "postgres")

@@ -5,7 +5,10 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from dotenv import load_dotenv
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-load_dotenv('config/.env')
+
+# Load .env from config directory with robust path resolution
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', '.env')
+load_dotenv(dotenv_path)
 
 def initialize_database():
     # Connection parameters to default postgres db to create the new database
@@ -72,7 +75,27 @@ def initialize_database():
             );
         """)
 
-        # 5. Risk Alerts Staging Table (For Phase 4 downstream alerts)
+        # 5. Users Table (Registration, Authentication & Subscription Management)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                full_name VARCHAR(100) NOT NULL,
+                email VARCHAR(120) NOT NULL UNIQUE,
+                phone_number VARCHAR(20) NOT NULL,
+                password_hash VARCHAR(256) NOT NULL,
+                receive_email BOOLEAN DEFAULT FALSE,
+                is_subscribed BOOLEAN DEFAULT FALSE,
+                subscribe_sms BOOLEAN DEFAULT FALSE,
+                subscribe_email BOOLEAN DEFAULT FALSE,
+                dispatch_preference VARCHAR(10) DEFAULT 'sms',
+                payment_status VARCHAR(20) DEFAULT 'trialing',
+                mpesa_checkout_id VARCHAR(100),
+                trial_ends_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+
+        # 6. Risk Alerts Staging Table (For Phase 4 downstream alerts)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS risk_alerts (
                 id SERIAL PRIMARY KEY,
