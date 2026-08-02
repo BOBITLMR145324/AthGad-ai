@@ -1,87 +1,117 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EarthGuard AI - Login</title>
     <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-slate-950 text-slate-100 flex items-center justify-center min-h-screen px-4">
+  </head>
+  <body
+    class="bg-slate-950 text-slate-100 flex items-center justify-center min-h-screen px-4"
+  >
+    <div
+      class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl"
+    >
+      <!-- Logo Header -->
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center gap-2.5 mb-2">
+          <!-- Logo Icon Container -->
+          <div class="w-8 h-8 flex-shrink-0 flex items-center justify-center">
+            {% include '_logo.html' %}
+          </div>
 
-    <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl">
-        <!-- Logo Header -->
-        <div class="text-center mb-8">
-            <div class="inline-flex items-center gap-2.5 mb-2">
-                <!-- Logo Icon Container -->
-                <div class="w-8 h-8 flex-shrink-0 flex items-center justify-center">
-                    {% include '_logo.html' %}
-                </div>
+          <!-- Title -->
+          <span class="text-white font-black tracking-wider text-xl uppercase"
+            >EarthGuard AI</span
+          >
+        </div>
+        <p class="text-slate-400 text-sm">
+          Sign in to view your alerts and risk dashboard
+        </p>
+      </div>
 
-                <!-- Title -->
-                <span class="text-white font-black tracking-wider text-xl uppercase">EarthGuard AI</span>
-            </div>
-            <p class="text-slate-400 text-sm">Sign in to access your mitigation dashboard</p>
+      <!-- Flash Messages Container -->
+      {% with messages = get_flashed_messages(with_categories=true) %} {% if
+      messages %}
+      <div id="flash-alerts-wrapper" class="space-y-2 mb-4">
+        {% for category, message in messages %}
+        <div
+          class="flash-alert p-3 rounded-lg text-xs font-medium transition-opacity duration-500 opacity-100 {% if category == 'error' %}bg-red-950/40 border border-red-800 text-red-200{% else %}bg-emerald-950/40 border border-emerald-800 text-emerald-200{% endif %}"
+        >
+          {{ message }}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %} {% endwith %}
+
+      <!-- Login Form -->
+      <form action="/login" method="POST" class="space-y-5">
+        <div>
+          <label
+            class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2"
+            >Email Address</label
+          >
+          <input
+            type="email"
+            name="email"
+            required
+            autocomplete="email"
+            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition"
+          />
         </div>
 
-        <!-- Flash Messages Container -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <div id="flash-alerts-wrapper" class="space-y-2 mb-4">
-                    {% for category, message in messages %}
-                        <div class="flash-alert p-3 rounded-lg text-xs font-medium transition-opacity duration-500 opacity-100 {% if category == 'error' %}bg-red-950/40 border border-red-800 text-red-200{% else %}bg-emerald-950/40 border border-emerald-800 text-emerald-200{% endif %}">
-                            {{ message }}
-                        </div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-        {% endwith %}
-
-        <!-- Login Form -->
-        <form action="/login" method="POST" class="space-y-5">
-            <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Email Address</label>
-                <input type="email" name="email" required autocomplete="email"
-                    class="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition">
-            </div>
-
-            <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Password</label>
-                <input type="password" name="password" required autocomplete="current-password"
-                    class="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition">
-            </div>
-
-            <button type="submit" 
-                class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold uppercase tracking-wider text-sm py-3 rounded-lg transition duration-200 cursor-pointer">
-                Sign In
-            </button>
-        </form>
-
-        <!-- Toggle to Register Link -->
-        <div class="mt-6 text-center text-sm border-t border-slate-800/60 pt-5">
-            <span class="text-slate-400">Don't have an account?</span>
-            <a href="/register" class="text-emerald-400 hover:text-emerald-300 font-semibold ml-1 transition">Register here</a>
+        <div>
+          <label
+            class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2"
+            >Password</label
+          >
+          <input
+            type="password"
+            name="password"
+            required
+            autocomplete="current-password"
+            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition"
+          />
         </div>
+
+        <button
+          type="submit"
+          class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold uppercase tracking-wider text-sm py-3 rounded-lg transition duration-200 cursor-pointer"
+        >
+          Sign In
+        </button>
+      </form>
+
+      <!-- Toggle to Register Link -->
+      <div class="mt-6 text-center text-sm border-t border-slate-800/60 pt-5">
+        <span class="text-slate-400">Don't have an account?</span>
+        <a
+          href="/register"
+          class="text-emerald-400 hover:text-emerald-300 font-semibold ml-1 transition"
+          >Register here</a
+        >
+      </div>
     </div>
 
     <!-- 2-Second Auto-Dismiss Script for Flash Alerts -->
     <script>
-        document.addEventListener("DOMContentLoaded", () => {
-            const alerts = document.querySelectorAll(".flash-alert");
-            
-            if (alerts.length > 0) {
-                setTimeout(() => {
-                    alerts.forEach(alert => {
-                        // Fade out opacity
-                        alert.classList.replace("opacity-100", "opacity-0");
-                        
-                        // Wait for 500ms fade duration to complete, then remove from layout
-                        setTimeout(() => {
-                            alert.remove();
-                        }, 500);
-                    });
-                }, 2000); // 2000ms = 2 seconds
-            }
-        });
+      document.addEventListener("DOMContentLoaded", () => {
+        const alerts = document.querySelectorAll(".flash-alert");
+
+        if (alerts.length > 0) {
+          setTimeout(() => {
+            alerts.forEach((alert) => {
+              // Fade out opacity
+              alert.classList.replace("opacity-100", "opacity-0");
+
+              // Wait for 500ms fade duration to complete, then remove from layout
+              setTimeout(() => {
+                alert.remove();
+              }, 500);
+            });
+          }, 2000); // 2000ms = 2 seconds
+        }
+      });
     </script>
-</body>
+  </body>
 </html>

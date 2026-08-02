@@ -1,153 +1,249 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EarthGuard AI - Multi-Domain Early Warning Gateway</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EarthGuard AI - Early Warning Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head>
-<body class="bg-slate-900 text-slate-100 font-sans min-h-screen">
-
-    <header class="border-b border-slate-800 bg-slate-950 p-4 sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto flex justify-between items-center">
-        
+  </head>
+  <body class="bg-slate-900 text-slate-100 font-sans min-h-screen">
+    <header
+      class="border-b border-slate-800 bg-slate-950 p-4 sticky top-0 z-50"
+    >
+      <div class="max-w-7xl mx-auto flex justify-between items-center">
         <!-- LEFT BRANDING SECTION: Clean Animated Logo + Title -->
         <div class="flex items-center space-x-3">
-            <div class="w-11 h-11 flex-shrink-0 flex items-center justify-center">
-                {% include '_logo.html' %}
-            </div>
-            <h1 class="text-xl font-black tracking-wider text-emerald-400 uppercase">EARTHGUARD AI</h1>
+          <div class="w-11 h-11 flex-shrink-0 flex items-center justify-center">
+            {% include '_logo.html' %}
+          </div>
+          <h1
+            class="text-xl font-black tracking-wider text-emerald-400 uppercase"
+          >
+            EARTHGUARD AI
+          </h1>
         </div>
 
         <!-- RIGHT CONTROLS SECTION -->
         <div class="flex items-center space-x-4">
-            
-            <!-- Get SMS Alerts -->
-            <a href="/subscribe" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase shadow-md shadow-emerald-950/20 transition duration-200 cursor-pointer">
-                Upgrade to Premium Alerts
-            </a>
+          <!-- Get SMS Alerts -->
+          <a
+            href="/subscribe"
+            class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase shadow-md shadow-emerald-950/20 transition duration-200 cursor-pointer"
+          >
+            Upgrade to Premium Alerts
+          </a>
 
-            <!-- Sign Out -->
-            <a href="/logout" class="border border-slate-800 hover:bg-slate-900 text-slate-400 hover:text-rose-400 font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase transition duration-200 cursor-pointer flex items-center gap-1.5">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3.5 h-3.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" />
-                </svg>
-                Sign Out
-            </a>
+          <!-- Sign Out -->
+          <a
+            href="/logout"
+            class="border border-slate-800 hover:bg-slate-900 text-slate-400 hover:text-rose-400 font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase transition duration-200 cursor-pointer flex items-center gap-1.5"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="2"
+              stroke="currentColor"
+              class="w-3.5 h-3.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75"
+              />
+            </svg>
+            Sign Out
+          </a>
 
-            <!-- Observation Vector Selector -->
-            <div class="flex items-center space-x-2 pl-2 border-l border-slate-800">
-                <label for="county-selector" class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Observation Vector:</label>
-                <select id="county-selector" onchange="triggerRiskEvaluationPipeline()" class="bg-slate-900 border border-slate-700 text-slate-100 text-sm font-medium rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 transition cursor-pointer">
-                    <option value="Kitui" selected>Kitui County</option>
-                    <option value="Machakos">Machakos County</option>
-                    <option value="Makueni">Makueni County</option>
-                    <option value="Marsabit">Marsabit County</option>
-                    <option value="Isiolo">Isiolo County</option>
-                    <option value="Meru">Meru County</option>
-                    <option value="Embu">Embu County</option>
-                    <option value="Tharaka-Nithi">Tharaka-Nithi County</option>
-                </select>
-            </div>
-
+          <!-- Observation Vector Selector -->
+          <div
+            class="flex items-center space-x-2 pl-2 border-l border-slate-800"
+          >
+            <label
+              for="county-selector"
+              class="text-xs text-slate-400 font-semibold uppercase tracking-wider"
+              >County:</label
+            >
+            <select
+              id="county-selector"
+              onchange="triggerRiskEvaluationPipeline()"
+              class="bg-slate-900 border border-slate-700 text-slate-100 text-sm font-medium rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 transition cursor-pointer"
+            >
+              <option value="Kitui" selected>Kitui County</option>
+              <option value="Machakos">Machakos County</option>
+              <option value="Makueni">Makueni County</option>
+              <option value="Marsabit">Marsabit County</option>
+              <option value="Isiolo">Isiolo County</option>
+              <option value="Meru">Meru County</option>
+              <option value="Embu">Embu County</option>
+              <option value="Tharaka-Nithi">Tharaka-Nithi County</option>
+            </select>
+          </div>
         </div>
-
-    </div>
-</header>
+      </div>
+    </header>
 
     <main class="max-w-7xl mx-auto p-6 space-y-6">
-        
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            <div class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between">
-                <div>
-                    <h3 id="current-county-title" class="text-slate-400 text-xs font-semibold tracking-wider uppercase">Risk Assessment</h3>
-                    <div class="flex items-baseline space-x-2 mt-4">
-                        <span id="risk-score" class="text-5xl font-black text-white">0.0%</span>
-                    </div>
-                </div>
-                <div class="mt-4 pt-4 border-t border-slate-900 flex justify-between items-center">
-                    <span class="text-sm text-slate-400">Status Band:</span>
-                    <span id="risk-badge" class="px-3 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300">Evaluating</span>
-                </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div
+          class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between"
+        >
+          <div>
+            <h3
+              id="current-county-title"
+              class="text-slate-400 text-xs font-semibold tracking-wider uppercase"
+            >
+              Risk Assessment
+            </h3>
+            <div class="flex items-baseline space-x-2 mt-4">
+              <span id="risk-score" class="text-5xl font-black text-white"
+                >0.0%</span
+              >
             </div>
-
-            <div class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-center space-y-2">
-                <h3 class="text-rose-400 text-xs font-bold tracking-wider uppercase flex items-center space-x-1.5">
-                    <span>⚠️ Imminent Calamity Forecast</span>
-                </h3>
-                <p id="predicted-calamity" class="text-base font-bold text-slate-100 leading-tight pt-1">Querying telemetry...</p>
-                <p id="vulnerability-drivers" class="text-xs text-slate-400 leading-relaxed pt-1"></p>
-            </div>
-
-            <div class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between">
-                <div>
-                    <h3 class="text-slate-400 text-xs font-semibold tracking-wider uppercase">System Sync Pulse</h3>
-                    <div class="space-y-1 mt-2">
-                        <p class="text-xs text-slate-500">Last Algorithmic Refresh:</p>
-                        <p id="sync-clock" class="text-sm font-mono text-slate-300">Pending Execution...</p>
-                    </div>
-                </div>
-                <button id="refresh-btn" onclick="triggerRiskEvaluationPipeline()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded transition">
-                    Refresh Risk Evaluation
-                </button>
-            </div>
+          </div>
+          <div
+            class="mt-4 pt-4 border-t border-slate-900 flex justify-between items-center"
+          >
+            <span class="text-sm text-slate-400">Status:</span>
+            <span
+              id="risk-badge"
+              class="px-3 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300"
+              >Evaluating</span
+            >
+          </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            <div class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between space-y-4">
-                <div>
-                    <div class="border-b border-slate-800 pb-3">
-                        <h2 class="text-amber-400 text-sm font-bold uppercase tracking-wider">🛑 PROACTIVE BLUEPRINT (ACT BEFORE ONSET)</h2>
-                        <p class="text-xs text-slate-400 mt-1">Pre-calculated actions to mitigate risks and eliminate preventable secondary crises.</p>
-                    </div>
-                    
-                    <div id="solutions-checklist" class="mt-4 space-y-2.5 text-sm text-slate-300">
-                        </div>
-                </div>
-                
-                <div class="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
-                    <h4 class="text-xs font-bold text-rose-400 uppercase tracking-wide">Cascading Risks & Disease Outbreaks:</h4>
-                    <ul id="cascading-effects" class="list-disc list-inside text-xs text-slate-400 mt-2 space-y-1 leading-relaxed">
-                        </ul>
-                </div>
-            </div>
-
-            <div class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between">
-                <h3 class="text-slate-400 text-xs font-semibold tracking-wider uppercase mb-4">Cross-Domain Severity Vectors</h3>
-                <div class="h-96 relative flex items-center justify-center">
-                    <canvas id="metricsChart"></canvas>
-                </div>
-            </div>
+        <div
+          class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-center space-y-2"
+        >
+          <h3
+            class="text-rose-400 text-xs font-bold tracking-wider uppercase flex items-center space-x-1.5"
+          >
+            <span>⚠️ Predicted Threat</span>
+          </h3>
+          <p
+            id="predicted-calamity"
+            class="text-base font-bold text-slate-100 leading-tight pt-1"
+          >
+            Checking latest data...
+          </p>
+          <p
+            id="vulnerability-drivers"
+            class="text-xs text-slate-400 leading-relaxed pt-1"
+          ></p>
         </div>
 
-        <div class="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-            <div class="p-6 border-b border-slate-800">
-    <h3 class="text-emerald-400 text-xs font-bold tracking-wider uppercase">Eastern Kenya Regional Coverage Status Board </h3>
-</div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-sm text-slate-300">
-                    <thead class="bg-slate-900/80 border-b border-slate-800 text-[11px] uppercase tracking-wider text-slate-400 font-bold">
-    <tr>
-        <th class="py-4 px-6 text-left">Targeted Calamity</th>
-        <th class="py-4 px-6 text-left">Ingestion Timestamp</th>
-        <th class="py-4 px-6 text-left">County Vector</th>
-        <th class="py-4 px-6 text-left">Composite Rating</th>
-        <th class="py-4 px-6 text-left">Risk Severity Classification</th>
-    </tr>
-</thead>
-                    <tbody id="alert-table-body">
-                        <tr>
-                            <td colspan="5" class="p-4 text-center text-slate-600">Querying alert records array...</td>
-                        </tr>
-                    </tbody>
-                </table>
+        <div
+          class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between"
+        >
+          <div>
+            <h3
+              class="text-slate-400 text-xs font-semibold tracking-wider uppercase"
+            >
+              Last Update
+            </h3>
+            <div class="space-y-1 mt-2">
+              <p class="text-xs text-slate-500">Data refreshed at:</p>
+              <p id="sync-clock" class="text-sm font-mono text-slate-300">
+                Waiting for update...
+              </p>
             </div>
+          </div>
+          <button
+            id="refresh-btn"
+            onclick="triggerRiskEvaluationPipeline()"
+            class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded transition"
+          >
+            Refresh Risk Data
+          </button>
         </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div
+          class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between space-y-4"
+        >
+          <div>
+            <div class="border-b border-slate-800 pb-3">
+              <h2
+                class="text-amber-400 text-sm font-bold uppercase tracking-wider"
+              >
+                🛑 WHAT YOU CAN DO
+              </h2>
+              <p class="text-xs text-slate-400 mt-1">
+                Simple steps to reduce risk and avoid further problems.
+              </p>
+            </div>
+
+            <div
+              id="solutions-checklist"
+              class="mt-4 space-y-2.5 text-sm text-slate-300"
+            ></div>
+          </div>
+
+          <div
+            class="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80"
+          >
+            <h4 class="text-xs font-bold text-rose-400 uppercase tracking-wide">
+              Possible Impacts & Risks:
+            </h4>
+            <ul
+              id="cascading-effects"
+              class="list-disc list-inside text-xs text-slate-400 mt-2 space-y-1 leading-relaxed"
+            ></ul>
+          </div>
+        </div>
+
+        <div
+          class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between"
+        >
+          <h3
+            class="text-slate-400 text-xs font-semibold tracking-wider uppercase mb-4"
+          >
+            Risk Levels by Category
+          </h3>
+          <div class="h-96 relative flex items-center justify-center">
+            <canvas id="metricsChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div
+        class="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden"
+      >
+        <div class="p-6 border-b border-slate-800">
+          <h3
+            class="text-emerald-400 text-xs font-bold tracking-wider uppercase"
+          >
+            Eastern Kenya Risk Status
+          </h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead
+              class="bg-slate-900/80 border-b border-slate-800 text-[11px] uppercase tracking-wider text-slate-400 font-bold"
+            >
+              <tr>
+                <th class="py-4 px-6 text-left">Threat</th>
+                <th class="py-4 px-6 text-left">Updated</th>
+                <th class="py-4 px-6 text-left">County</th>
+                <th class="py-4 px-6 text-left">Risk Score</th>
+                <th class="py-4 px-6 text-left">Risk Level</th>
+              </tr>
+            </thead>
+            <tbody id="alert-table-body">
+              <tr>
+                <td colspan="5" class="p-4 text-center text-slate-600">
+                  Loading alerts...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </main>
 
     <script src="/static/js/dashboard.js"></script>
-</body>
+  </body>
 </html>

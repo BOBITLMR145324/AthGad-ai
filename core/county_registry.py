@@ -2,33 +2,33 @@
 
 HAZARD_BLUEPRINTS = {
     "Flooding & Landslides": {
-        "vulnerability_drivers": "Low-lying basins or highly degraded slopes prone to saturation shifts and channel overflows.",
+        "vulnerability_drivers": "Areas near rivers or on steep, worn-down slopes that can flood or slide during heavy rain.",
         "cascading_effects": [
-            "Destruction of riverine agricultural fields, causing localized crop shortfalls.",
-            "Spikes in vector-borne (Malaria) and waterborne diseases due to massive stagnant pooling.",
-            "Contamination of community wells, sand dams, and boreholes leading to acute gastrointestinal outbreaks.",
-            "Debris flows and flash floods cutting off vital transport and emergency medical routes."
+            "Farmland near rivers can be destroyed, causing food shortages.",
+            "Malaria and waterborne diseases can spread quickly in standing water.",
+            "Community wells and water sources can be contaminated, causing stomach illnesses.",
+            "Mud and flash floods can block roads and cut off emergency help."
         ],
         "proactive_solutions": [
-            "Early Infrastructure Protection: Construct and reinforce sandbag dykes along vulnerable river sections.",
-            "Vector Interventions: Pre-position and distribute long-lasting insecticidal nets (LLINs) and execute indoor residual spraying.",
-            "Sanitation Guarding: Construct raised-pit latrines or seal boreholes in flood-prone zones to prevent structural sewage leaks.",
-            "Slope Stabilisation: Enforce contour terracing and plant deep-rooted vetiver grass along steep, highly degraded terrains."
+            "Build and reinforce sandbag dykes along riverbanks at risk of flooding.",
+            "Give out insecticide-treated bed nets and spray homes to keep mosquitoes away.",
+            "Build raised toilets and seal water wells in flood-prone areas to stop sewage leaking into them.",
+            "Use terracing and plant deep-rooted grass on steep slopes to stop the ground from washing away."
         ]
     },
     "Severe Drought": {
-        "vulnerability_drivers": "Semi-arid climate parameters paired with extreme multi-season precipitation deficits.",
+        "vulnerability_drivers": "Dry regions that have gone several seasons without enough rain.",
         "cascading_effects": [
-            "Widespread rain-fed staple crop failures, driving acute food reliance alerts.",
-            "Depletion of operational pasture lands, forcing mass livestock migration and potential regional conflicts.",
-            "Severe acute malnutrition vectors scaling among vulnerable rural populations.",
-            "Increased household water-scarcity stress, forcing long-distance walking vectors to unmonitored water points."
+            "Crops that depend on rain can fail, leading to food shortages.",
+            "Grazing land dries up, forcing livestock to move far and sometimes causing conflict.",
+            "Children and families in rural areas are at higher risk of malnutrition.",
+            "Households face water shortages and must walk long distances to unsafe water points."
         ],
         "proactive_solutions": [
-            "Climate-Smart Agriculture: Push real-time SMS advisories advising farmers to execute an absolute shift to drought-tolerant crop varieties.",
-            "Strategic Destocking: Subsidize emergency animal feed and execute mass veterinary vaccinations before body conditions deteriorate.",
-            "Water Resource Allocation: Activate remote sub-surface water tracking maps and pre-position water bowsers at critical drying junctions.",
-            "Financial Safety Nets: Trigger index-based livestock insurance payouts or distribute localized emergency cash transfers."
+            "Send farmers text-message advice on switching to crops that survive drought.",
+            "Provide subsidized animal feed and vaccines before livestock become weak.",
+            "Track underground water reserves and place water tankers at key drying points.",
+            "Pay out livestock insurance and give emergency cash to affected families."
         ]
     }
 }
@@ -55,12 +55,12 @@ def get_county_advisory(county_name: str, calculated_calamity: str) -> dict:
                 river_asset = "the Ewaso Ng'iro River channels"
             elif county_name == "Makueni":
                 river_asset = "the Athi River sub-basin tracks"
-            sol = f"Early Infrastructure Protection: Construct and reinforce sandbag dykes along vulnerable bends of {river_asset}."
+            sol = f"Build and reinforce sandbag dykes along vulnerable bends of {river_asset}."
         localized_solutions.append(sol)
 
     return {
         "primary_calamity": calculated_calamity,
-        "vulnerability_drivers": f"{county_name} Vector: {base_blueprint['vulnerability_drivers']}",
+        "vulnerability_drivers": f"{county_name} County: {base_blueprint['vulnerability_drivers']}",
         "cascading_effects": list(base_blueprint["cascading_effects"]),
         "proactive_solutions": localized_solutions
     }

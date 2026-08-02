@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EarthGuard AI - Share Your Feedback</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body
+    class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4"
+  >
+    <div
+      class="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl"
+    >
+      <!-- Header -->
+      <div class="mb-6 text-center">
+        <h2 class="text-2xl font-black text-white tracking-tight">
+          We're Sorry to See You Go
+        </h2>
+        <p class="text-slate-400 text-sm mt-1">
+          Help us improve by sharing your reason for leaving.
+        </p>
+      </div>
+
+      <!-- Flash Messages -->
+      {% with messages = get_flashed_messages(with_categories=true) %} {% if
+      messages %}
+      <div class="mb-6 space-y-2">
+        {% for category, message in messages %}
+        <div
+          class="p-3 rounded-xl text-xs font-semibold {% if category == 'error' %} bg-rose-950/60 border border-rose-800 text-rose-300 {% elif category == 'info' %} bg-sky-950/60 border border-sky-800 text-sky-300 {% else %} bg-emerald-950/60 border border-emerald-800 text-emerald-300 {% endif %}"
+        >
+          {{ message }}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %} {% endwith %}
+
+      <form
+        action="/unsubscribe/reason?email={{ email }}"
+        method="POST"
+        class="space-y-6"
+      >
+        <!-- Suggested Answers -->
+        <div>
+          <label
+            class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-3"
+            >Select a reason (optional)</label
+          >
+          <div class="space-y-3">
+            <label
+              class="flex items-center gap-3 border border-slate-800 bg-slate-950/60 rounded-xl p-4 cursor-pointer hover:border-emerald-600 transition"
+            >
+              <input
+                type="radio"
+                name="suggested_answer"
+                value="Too many messages"
+                class="accent-emerald-500"
+              />
+              <span class="text-sm text-slate-200">Too many messages</span>
+            </label>
+            <label
+              class="flex items-center gap-3 border border-slate-800 bg-slate-950/60 rounded-xl p-4 cursor-pointer hover:border-emerald-600 transition"
+            >
+              <input
+                type="radio"
+                name="suggested_answer"
+                value="Not useful"
+                class="accent-emerald-500"
+              />
+              <span class="text-sm text-slate-200">Not useful</span>
+            </label>
+            <label
+              class="flex items-center gap-3 border border-slate-800 bg-slate-950/60 rounded-xl p-4 cursor-pointer hover:border-emerald-600 transition"
+            >
+              <input
+                type="radio"
+                name="suggested_answer"
+                value="Too expensive"
+                class="accent-emerald-500"
+              />
+              <span class="text-sm text-slate-200">Too expensive</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Free Text -->
+        <div>
+          <label
+            class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2"
+            >Or write your own reason</label
+          >
+          <textarea
+            name="free_text"
+            rows="3"
+            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 placeholder-slate-600"
+            placeholder="Your feedback helps us improve..."
+          ></textarea>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex flex-col sm:flex-row gap-3 pt-2">
+          <a
+            href="/dashboard"
+            class="flex-1 border border-slate-800 hover:bg-slate-800 text-slate-300 font-bold flex items-center justify-center py-3 rounded-lg text-xs uppercase tracking-wider transition"
+          >
+            Skip & Return
+          </a>
+          <button
+            type="submit"
+            class="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold flex items-center justify-center py-3 rounded-lg text-xs uppercase tracking-wider transition shadow-lg shadow-emerald-950/20 cursor-pointer"
+          >
+            Submit Feedback
+          </button>
+        </div>
+
+        <input type="hidden" name="email" value="{{ email }}" />
+      </form>
+    </div>
+  </body>
+</html>

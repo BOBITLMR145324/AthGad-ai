@@ -90,10 +90,82 @@ def initialize_database():
                 dispatch_preference VARCHAR(10) DEFAULT 'sms',
                 payment_status VARCHAR(20) DEFAULT 'trialing',
                 mpesa_checkout_id VARCHAR(100),
+                trial_started_at TIMESTAMP,
                 trial_ends_at TIMESTAMP,
+                unsubscribed_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT NOW()
             );
         """)
+
+        # 5b. Unsubscriptions Table (Tracks opt-outs + optional reasons)
+        # Primary key uses the person's full name; if the same name appears more
+        # than once, a numeric suffix (1, 2, ...) is appended to keep it unique.
+        # ── Migration: Drop old-format table if it lacks the new `unsub_ref` column ──
+        # Old-format variants used either `user_id` OR `id`/`full_name`/`raw_reply`;
+        # both are detected here and safely rebuilt with legacy rows preserved.
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'unsubscriptions'
+        """)
+        existing_unsub_columns = [row[0] for row in cursor.fetchall()]
+
+        if existing_unsub_columns and 'unsub_ref' not in existing_unsub_columns:
+            # Preserve legacy feedback rows before dropping the old-format table
+            try:
+                cursor.execute("""
+                    SELECT full_name, channel, reason, unsubscribed_at
+                    FROM unsubscriptions
+                    WHERE full_name IS NOT NULL
+                """)
+                legacy_rows = cursor.fetchall()
+            except Exception as e:
+                print(f"Could not read legacy unsubscriptions rows: {e}")
+                legacy_rows = []
+
+            cursor.execute("DROP TABLE unsubscriptions")
+            print(f"Dropped old-format unsubscriptions table (detected {len(existing_unsub_columns)} legacy columns).")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS unsubscriptions (
+                unsub_ref VARCHAR(150) PRIMARY KEY,  -- person's full name (+ numeric suffix on duplicates)
+                channel VARCHAR(10) NOT NULL,        -- 'sms' or 'email'
+                reason VARCHAR(255),
+                suggested_answer VARCHAR(255) GENERATED ALWAYS AS (
+                    CASE
+                        WHEN reason IS NOT NULL AND reason <> '' THEN reason
+                        ELSE NULL
+                    END
+                ) STORED,
+                unsubscribed_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+
+        # Re-insert any legacy feedback rows under the new schema with unique unsub_ref keys
+        if existing_unsub_columns and 'unsub_ref' not in existing_unsub_columns:
+            seen_names = {}
+            inserted = 0
+            for row in legacy_rows:
+                legacy_full_name, legacy_channel, legacy_reason, legacy_unsub_at = row
+                base_name = (legacy_full_name or "Unknown").strip()
+                if base_name in seen_names:
+                    seen_names[base_name] += 1
+                    unsub_ref = f"{base_name}{seen_names[base_name]}"
+                else:
+                    seen_names[base_name] = 0
+                    unsub_ref = base_name
+                cursor.execute(
+                    "INSERT INTO unsubscriptions (unsub_ref, channel, reason, unsubscribed_at) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (unsub_ref, legacy_channel or 'email', legacy_reason, legacy_unsub_at)
+                )
+                inserted += 1
+            if inserted:
+                print(f"Preserved {inserted} legacy unsubscription feedback record(s) under the new schema.")
+
+        # 5c. Idempotent migrations for existing databases
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMP;")
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMP;")
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS unsubscribed_at TIMESTAMP;")
 
         # 6. Risk Alerts Staging Table (For Phase 4 downstream alerts)
         cursor.execute("""

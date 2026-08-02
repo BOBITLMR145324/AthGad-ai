@@ -6,7 +6,7 @@
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>Alert Vector Registration - EarthGuard AI</title>
+    <title>Create Your Account - EarthGuard AI</title>
 
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
@@ -35,7 +35,7 @@
         <p
           class="text-xs text-slate-400 uppercase tracking-widest font-semibold"
         >
-          Crisis Alert Registration Profile
+          Get Alerts That Help You Act Early
         </p>
       </div>
 
@@ -51,12 +51,18 @@
 
         <div
           class="flash-alert p-4 rounded-xl text-xs font-medium leading-relaxed border transition-opacity duration-500 opacity-100 {% if category == 'warning' or category == 'error' %} bg-rose-950/40 border-rose-800 text-rose-300 {% else %} bg-emerald-950/40 border-emerald-800 text-emerald-300 {% endif %}"
-          {% if category == 'warning' %}data-persistent="true"{% endif %}
+          {%
+          if
+          category=""
+          ="warning"
+          %}data-persistent="true"
+          {%
+          endif
+          %}
         >
           <p class="font-bold mb-1">
-            {% if category == 'warning' %}Account Match Detected:{% elif
-            category == 'error' %}Validation Halt:{% else %}Success
-            Confirmation:{% endif %}
+            {% if category == 'warning' %}Account Found:{% elif category ==
+            'error' %}Please Check:{% else %}Success!{% endif %}
           </p>
 
           {{ message }} {% if category == 'warning' %}
@@ -125,7 +131,7 @@
           />
 
           <p class="text-[10px] text-slate-500 mt-1">
-            Staged target destination for system routing protocols.
+            We'll use this number to send you SMS alerts.
           </p>
         </div>
 
@@ -157,13 +163,12 @@
                 class="h-2 w-2 rounded-full bg-amber-500 animate-pulse"
               ></span>
 
-              Alert Gateway Notice
+              How Your Alerts Work
             </div>
 
-            Real-time push telemetry updates for regional crisis mitigations are
-            managed directly via your control dashboard. You can configure and
-            activate your routing channel preferences immediately after account
-            creation.
+            You'll get early warnings about drought, floods, and disease risks
+            in your area. After creating your account, you can choose how you
+            receive alerts.
           </div>
 
           <div class="flex items-start space-x-3">
@@ -180,12 +185,11 @@
               <label
                 for="receive_email"
                 class="font-semibold text-slate-200 cursor-pointer"
-                >Enable Baseline Email Updates</label
+                >Get Email Updates</label
               >
 
               <p class="text-slate-400 text-[11px]">
-                Opt-in to receive structural analytics summaries directly in
-                your inbox.
+                Receive easy-to-read risk summaries by email.
               </p>
             </div>
           </div>
@@ -205,12 +209,11 @@
               <label
                 for="receive_sms"
                 class="font-semibold text-slate-200 cursor-pointer"
-                >Enable SMS Alert Delivery</label
+                >Get SMS Alerts</label
               >
 
               <p class="text-slate-400 text-[11px]">
-                Receive real-time risk SMS alerts directly to your phone for
-                your county.
+                Get urgent risk alerts by text message for your county.
               </p>
             </div>
           </div>
@@ -220,7 +223,7 @@
           type="submit"
           class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-lg transition text-sm cursor-pointer mt-4 shadow-lg shadow-emerald-950/20"
         >
-          Create Account & Proceed
+          Create My Account
         </button>
       </form>
 
@@ -239,7 +242,7 @@
 
     <div class="text-center pt-4">
       <a href="/" class="text-xs text-slate-500 hover:text-slate-300 transition"
-        >← Cancel and Return to Gateway Analytics</a
+        >← Back to Home</a
       >
     </div>
 
