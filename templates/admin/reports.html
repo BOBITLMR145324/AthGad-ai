@@ -101,6 +101,61 @@
         </p>
       </div>
 
+      <!-- Report Time Span (optional date-range filter) -->
+      <div class="bg-slate-900 border border-emerald-500/30 rounded-2xl p-6">
+        <div class="flex items-center gap-2">
+          <span class="text-emerald-400 text-lg">🗓️</span>
+          <h3
+            class="text-sm font-bold text-emerald-300 uppercase tracking-wider"
+          >
+            Report Time Span
+          </h3>
+        </div>
+        <p class="text-xs text-slate-400 mt-1.5">
+          Choose a date range to limit every generated report to that period.
+          Leave both fields empty for the full history.
+        </p>
+        <div class="mt-4 flex flex-wrap items-end gap-4">
+          <div>
+            <label
+              class="block text-[10px] uppercase tracking-wider text-slate-400 mb-1"
+              >From Date</label
+            >
+            <input
+              type="date"
+              id="date-from"
+              class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+            />
+          </div>
+          <div>
+            <label
+              class="block text-[10px] uppercase tracking-wider text-slate-400 mb-1"
+              >To Date</label
+            >
+            <input
+              type="date"
+              id="date-to"
+              class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+            />
+          </div>
+          <button
+            type="button"
+            id="apply-range"
+            class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition cursor-pointer"
+          >
+            Apply Range
+          </button>
+          <button
+            type="button"
+            id="clear-range"
+            class="border border-slate-700 hover:bg-slate-800 text-slate-300 font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition cursor-pointer"
+          >
+            Clear
+          </button>
+        </div>
+        <p id="range-status" class="text-[10px] text-slate-500 mt-3"></p>
+      </div>
+
       <!-- Live Report Snapshot (auto-refreshing) -->
       <div class="bg-slate-900 border border-emerald-500/30 rounded-2xl p-6">
         <div class="flex items-center justify-between mb-4">
@@ -208,7 +263,8 @@
           </div>
           <a
             href="/admin/reports/predicted_calamities/pdf"
-            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+            data-report="/admin/reports/predicted_calamities/pdf"
+            class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
             📄 Download PDF
           </a>
@@ -235,7 +291,8 @@
           </div>
           <a
             href="/admin/reports/disease_outbreaks/pdf"
-            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+            data-report="/admin/reports/disease_outbreaks/pdf"
+            class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
             📄 Download PDF
           </a>
@@ -260,7 +317,8 @@
           </div>
           <a
             href="/admin/reports/subscribed_members/pdf"
-            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+            data-report="/admin/reports/subscribed_members/pdf"
+            class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
             📄 Download PDF
           </a>
@@ -285,7 +343,8 @@
           </div>
           <a
             href="/admin/reports/unsubscribed_members/pdf"
-            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+            data-report="/admin/reports/unsubscribed_members/pdf"
+            class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
             📄 Download PDF
           </a>
@@ -311,7 +370,8 @@
           </div>
           <a
             href="/admin/reports/alert_dispatch_logs/pdf"
-            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+            data-report="/admin/reports/alert_dispatch_logs/pdf"
+            class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
             📄 Download PDF
           </a>
@@ -349,9 +409,55 @@
             if (upd) upd.textContent = "Snapshot unavailable";
           });
       }
+
+      // Report time span: apply the selected date range to every download link.
+      function applyRange() {
+        var from = document.getElementById("date-from").value;
+        var to = document.getElementById("date-to").value;
+        if (from && to && from > to) {
+          alert("Start date cannot be after the end date.");
+          return;
+        }
+        document.querySelectorAll(".pdf-link").forEach(function (link) {
+          var url = new URL(link.getAttribute("data-report"), window.location.origin);
+          url.searchParams.delete("date_from");
+          url.searchParams.delete("date_to");
+          if (from) url.searchParams.set("date_from", from);
+          if (to) url.searchParams.set("date_to", to);
+          link.href = url.pathname + url.search;
+        });
+        var status = document.getElementById("range-status");
+        if (from || to) {
+          status.textContent =
+            "Reports will be limited to " + (from || "earliest") +
+            " \u2192 " + (to || "today") + ".";
+        } else {
+          status.textContent = "No date filter \u2014 reports include the full history.";
+        }
+        var url = new URL(window.location.href);
+        url.search = "";
+        if (from) url.searchParams.set("date_from", from);
+        if (to) url.searchParams.set("date_to", to);
+        history.replaceState({}, "", url.toString());
+      }
+
+      function initRange() {
+        var params = new URLSearchParams(window.location.search);
+        document.getElementById("date-from").value = params.get("date_from") || "";
+        document.getElementById("date-to").value = params.get("date_to") || "";
+        applyRange();
+      }
+
       document.addEventListener("DOMContentLoaded", function () {
         loadReportSnapshot();
         setInterval(loadReportSnapshot, 30000);
+        document.getElementById("apply-range").addEventListener("click", applyRange);
+        document.getElementById("clear-range").addEventListener("click", function () {
+          document.getElementById("date-from").value = "";
+          document.getElementById("date-to").value = "";
+          applyRange();
+        });
+        initRange();
       });
     </script>
   </body>

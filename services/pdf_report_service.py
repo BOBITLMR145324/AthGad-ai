@@ -51,6 +51,17 @@ def _eat_now():
         return datetime.now()
 
 
+def _fmt_period(date_from, date_to):
+    """Human-readable label for the requested report time span."""
+    if date_from and date_to:
+        return f"{date_from.isoformat()} to {date_to.isoformat()}"
+    if date_from:
+        return f"from {date_from.isoformat()} onwards"
+    if date_to:
+        return f"up to {date_to.isoformat()}"
+    return "Full history (no date filter)"
+
+
 # ---- Colour palette (matches the app's dark emerald theme) ----
 PRIMARY = colors.HexColor("#0f172a")
 ACCENT = colors.HexColor("#10b981")
@@ -112,7 +123,7 @@ def _styles():
     }
 
 
-def _page_decorator(canvas, doc, report_title):
+def _page_decorator(canvas, doc, report_title, period=None):
     """Draws a consistent branded header/footer on every PDF page."""
     canvas.saveState()
     page_w = doc.width + doc.leftMargin + doc.rightMargin
@@ -150,7 +161,7 @@ def _page_decorator(canvas, doc, report_title):
     )
     canvas.drawString(
         doc.leftMargin, 5.5 * mm,
-        "Confidential — for authorised AthGad AI administrators only.",
+        f"Report period: {period or 'Full history'}",
     )
     canvas.drawRightString(page_w - doc.rightMargin, 8.5 * mm, f"Page {doc.page}")
     canvas.restoreState()
@@ -180,7 +191,7 @@ def _table(headers, rows, col_widths=None, header_bg=ACCENT_DARK):
     return tbl
 
 
-def _snapshot_table(snapshot):
+def _snapshot_table(snapshot, period=None):
     """Live system snapshot rendered as a compact metric table."""
     rows = [
         ["Total Users", str(snapshot["total_users"])],
@@ -190,6 +201,7 @@ def _snapshot_table(snapshot):
         ["High-Risk Counties", str(snapshot["high_risk_counties"])],
         ["Alert Dispatches Sent", str(snapshot.get("dispatch_count", 0))],
         ["Alert Dispatches Failed", str(snapshot.get("dispatch_failed_count", 0))],
+        ["Report Period", period or "Full history"],
         ["Snapshot Taken At", snapshot["generated_at"]],
     ]
     return _table(
@@ -248,20 +260,23 @@ def _athgad_logo(width=18 * mm, height=18 * mm):
     return d
 
 
-def _predicted_calamities_pdf(doc, styles, engine):
-    items = get_predicted_calamities(engine)
+def _predicted_calamities_pdf(doc, styles, engine, date_from=None, date_to=None):
+    period = _fmt_period(date_from, date_to)
+    items = get_predicted_calamities(engine, date_from=date_from, date_to=date_to)
     doc.append(Paragraph("Predicted Calamities & Mitigation Actions", styles["h2"]))
     doc.append(Paragraph(
         "System-predicted calamities for covered counties, the mitigation "
         "actions recommended for each, and the date/time each prediction was produced.",
         styles["body"],
     ))
+    doc.append(Paragraph(f"<b>Report period:</b> {period}", styles["body"]))
     doc.append(Spacer(1, 6))
 
     if not items:
         doc.append(Paragraph(
-            "No processed risk data is available yet. Once the system computes "
-            "composite risk scores for the covered counties, they will appear here.",
+            "No processed risk data is available for the selected period. Once the "
+            "system computes composite risk scores for the covered counties, they "
+            "will appear here.",
             styles["body"],
         ))
         doc.append(Spacer(1, 6))
@@ -285,14 +300,16 @@ def _predicted_calamities_pdf(doc, styles, engine):
         doc.append(KeepTogether(block))
 
 
-def _disease_outbreaks_pdf(doc, styles, engine):
-    items = get_disease_outbreaks(engine)
+def _disease_outbreaks_pdf(doc, styles, engine, date_from=None, date_to=None):
+    period = _fmt_period(date_from, date_to)
+    items = get_disease_outbreaks(engine, date_from=date_from, date_to=date_to)
     doc.append(Paragraph("Predicted Disease Outbreaks & Preventive Measures", styles["h2"]))
     doc.append(Paragraph(
         "Predicted disease outbreaks for covered counties together with the "
         "recommended preventive (mitigation) measures.",
         styles["body"],
     ))
+    doc.append(Paragraph(f"<b>Report period:</b> {period}", styles["body"]))
     doc.append(Spacer(1, 6))
 
     rows = []
@@ -341,8 +358,9 @@ def _disease_outbreaks_pdf(doc, styles, engine):
         doc.append(KeepTogether(block))
 
 
-def _subscribed_members_pdf(doc, styles, engine):
-    members = get_subscribed_members(engine)
+def _subscribed_members_pdf(doc, styles, engine, date_from=None, date_to=None):
+    period = _fmt_period(date_from, date_to)
+    members = get_subscribed_members(engine, date_from=date_from, date_to=date_to)
     doc.append(Paragraph("Subscribed Members", styles["h2"]))
     doc.append(Paragraph(
         "Currently subscribed members with their full names, email addresses, "
@@ -350,6 +368,7 @@ def _subscribed_members_pdf(doc, styles, engine):
         "so anyone who subscribes is automatically included.",
         styles["body"],
     ))
+    doc.append(Paragraph(f"<b>Report period:</b> {period}", styles["body"]))
     doc.append(Spacer(1, 6))
 
     rows = [
@@ -379,14 +398,16 @@ def _subscribed_members_pdf(doc, styles, engine):
     ))
 
 
-def _unsubscribed_members_pdf(doc, styles, engine):
-    members = get_unsubscribed_members(engine)
+def _unsubscribed_members_pdf(doc, styles, engine, date_from=None, date_to=None):
+    period = _fmt_period(date_from, date_to)
+    members = get_unsubscribed_members(engine, date_from=date_from, date_to=date_to)
     doc.append(Paragraph("Unsubscribed Members & Unsubscription Reasons", styles["h2"]))
     doc.append(Paragraph(
         "Members who unsubscribed with their reasons, unsubscription date/time, and "
         "the period they were subscribed (in days, weeks, months, or years).",
         styles["body"],
     ))
+    doc.append(Paragraph(f"<b>Report period:</b> {period}", styles["body"]))
     doc.append(Spacer(1, 6))
 
     rows = [
@@ -421,8 +442,10 @@ def _unsubscribed_members_pdf(doc, styles, engine):
     ))
 
 
-def _alert_dispatch_logs_pdf(doc, styles, engine):
-    logs = get_alert_dispatch_logs(engine, limit=1000)
+def _alert_dispatch_logs_pdf(doc, styles, engine, date_from=None, date_to=None):
+    period = _fmt_period(date_from, date_to)
+    logs = get_alert_dispatch_logs(engine, limit=1000,
+                                   date_from=date_from, date_to=date_to)
     doc.append(Paragraph("Alert Dispatch Tracking Logs", styles["h2"]))
     doc.append(Paragraph(
         "Every tracked SMS/email dispatch with the recipient identifier (phone "
@@ -430,6 +453,7 @@ def _alert_dispatch_logs_pdf(doc, styles, engine):
         "sent, and the recipient's subscription status at dispatch time.",
         styles["body"],
     ))
+    doc.append(Paragraph(f"<b>Report period:</b> {period}", styles["body"]))
     doc.append(Spacer(1, 6))
 
     rows = [
@@ -490,16 +514,20 @@ _TITLES = {
 }
 
 
-def build_admin_report(engine, report_type: str) -> bytes:
+def build_admin_report(engine, report_type: str, date_from=None, date_to=None) -> bytes:
     """
     Builds the requested admin PDF report and returns it as bytes.
 
     Every report embeds a LIVE system snapshot and pulls its section data
     straight from the database at build time, so it is never static.
+    `date_from`/`date_to` (datetime.date objects) restrict every report section
+    to records inside that inclusive time span.
 
     Args:
         engine: SQLAlchemy engine (passed through to the data-access layer).
         report_type: one of the keys in _BUILDERS.
+        date_from: optional start date (inclusive).
+        date_to: optional end date (inclusive).
 
     Returns:
         PDF file contents as bytes.
@@ -508,6 +536,7 @@ def build_admin_report(engine, report_type: str) -> bytes:
         raise ValueError(f"Unknown report type: {report_type}")
 
     title = _TITLES[report_type]
+    period = _fmt_period(date_from, date_to)
     snapshot = get_report_snapshot(engine)
     now = _eat_now()
     buf = io.BytesIO()
@@ -542,23 +571,27 @@ def build_admin_report(engine, report_type: str) -> bytes:
     story.append(Spacer(1, 4))
     story.append(Paragraph(
         f"Eastern Kenya Early Warning System | Generated live: "
-        f"{now.strftime('%Y-%m-%d %H:%M EAT')} | Data is pulled at download time",
+        f"{now.strftime('%Y-%m-%d %H:%M EAT')}",
+        styles["meta"],
+    ))
+    story.append(Paragraph(
+        f"Report period: {period} | Data is pulled at download time",
         styles["meta"],
     ))
     story.append(Spacer(1, 8))
 
     # ── Live system snapshot ──
     story.append(Paragraph("Live System Snapshot", styles["snapshot_head"]))
-    story.append(_snapshot_table(snapshot))
+    story.append(_snapshot_table(snapshot, period))
     story.append(Spacer(1, 10))
 
     # ── Dispatch to the correct report builder ──
-    _BUILDERS[report_type](story, styles, engine)
+    _BUILDERS[report_type](story, styles, engine, date_from, date_to)
 
     doc.build(
         story,
-        onFirstPage=lambda c, d: _page_decorator(c, d, title),
-        onLaterPages=lambda c, d: _page_decorator(c, d, title),
+        onFirstPage=lambda c, d: _page_decorator(c, d, title, period),
+        onLaterPages=lambda c, d: _page_decorator(c, d, title, period),
     )
 
     return buf.getvalue()

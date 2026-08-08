@@ -40,6 +40,23 @@ def _fmt_dt(value, fmt="%Y-%m-%d %H:%M"):
     return dt.strftime(fmt) if dt else "—"
 
 
+def _range_where(column, date_from, date_to):
+    """
+    Builds (where_sql, params) for an inclusive date-range filter on `column`.
+    date_from/date_to are datetime.date objects (or None). date_to is treated
+    as inclusive by comparing against the start of the following day.
+    """
+    sql = ""
+    params = {}
+    if date_from is not None:
+        sql += f" AND {column} >= :date_from"
+        params["date_from"] = date_from
+    if date_to is not None:
+        sql += f" AND {column} < :date_to_excl"
+        params["date_to_excl"] = date_to + timedelta(days=1)
+    return sql, params
+
+
 def format_subscription_period(start_dt, end_dt=None):
     """
     Returns a human-readable subscription duration string.
@@ -67,29 +84,36 @@ def format_subscription_period(start_dt, end_dt=None):
     return f"{years} year(s)"
 
 
-def get_latest_risk_records(engine):
-    """Returns the latest persisted risk-alert record for each covered county."""
-    query = text("""
+def get_latest_risk_records(engine, date_from=None, date_to=None):
+    """Returns the latest persisted risk-alert record for each covered county.
+
+    When `date_from`/`date_to` are given, only risk-alert records whose
+    timestamp falls inside that inclusive range are considered.
+    """
+    where_sql, params = _range_where("timestamp", date_from, date_to)
+    query = text(f"""
         SELECT alert_code, timestamp, county, calculated_score, risk_level, notified
         FROM (
             SELECT alert_code, timestamp, county, calculated_score, risk_level, notified,
                    ROW_NUMBER() OVER (PARTITION BY county ORDER BY timestamp DESC) as rn
             FROM risk_alerts
+            WHERE 1=1{where_sql}
         ) sub
         WHERE rn = 1;
     """)
     with engine.connect() as conn:
-        rows = conn.execute(query).fetchall()
+        rows = conn.execute(query, params).fetchall()
     return {row.county: row for row in rows}
 
 
-def get_predicted_calamities(engine):
+def get_predicted_calamities(engine, date_from=None, date_to=None):
     """
     Builds the "Predicted Calamities" dataset from live system output only.
     Only counties with a persisted risk-alert record (i.e. what the dashboard
     is showing) are included — no hardcoded fallback rows are added.
+    `date_from`/`date_to` restrict the considered risk records to a date range.
     """
-    records = get_latest_risk_records(engine)
+    records = get_latest_risk_records(engine, date_from=date_from, date_to=date_to)
     items = []
     for county in COVERED_COUNTIES:
         record = records.get(county)
@@ -121,18 +145,21 @@ def get_predicted_calamities(engine):
     return items
 
 
-def get_disease_outbreaks(engine):
+def get_disease_outbreaks(engine, date_from=None, date_to=None):
     """
     Builds the "Disease Outbreaks" dataset by aggregating health_records per
     county with the latest reported cases and preventive measures.
     Preventive measures are derived from the county advisory registry.
+    `date_from`/`date_to` restrict the considered health records to a date range.
     """
-    query = text("""
+    where_sql, params = _range_where("timestamp", date_from, date_to)
+    query = text(f"""
         WITH latest AS (
             SELECT county, disease_type, reported_cases, reporting_rate, timestamp,
                    ROW_NUMBER() OVER (PARTITION BY county, disease_type
                                       ORDER BY timestamp DESC) as rn
             FROM health_records
+            WHERE 1=1{where_sql}
         )
         SELECT county, disease_type, reported_cases, reporting_rate, timestamp
         FROM latest
@@ -142,7 +169,7 @@ def get_disease_outbreaks(engine):
     disease_map = {}
     try:
         with engine.connect() as conn:
-            rows = conn.execute(query).fetchall()
+            rows = conn.execute(query, params).fetchall()
         for row in rows:
             disease_map.setdefault(row.county, []).append({
                 "disease_type": row.disease_type,
@@ -172,20 +199,23 @@ def get_disease_outbreaks(engine):
     return items
 
 
-def get_subscribed_members(engine):
+def get_subscribed_members(engine, date_from=None, date_to=None):
     """
     Returns currently subscribed members (is_subscribed = True) with their
-    full name and subscription start time.
+    full name and subscription start time. `date_from`/`date_to` restrict the
+    list to members whose subscription started inside that date range.
     """
-    query = text("""
+    where_sql, params = _range_where(
+        "COALESCE(subscription_started_at, registered_at)", date_from, date_to)
+    query = text(f"""
         SELECT full_name, email, subscription_started_at, registered_at
         FROM users
         WHERE is_subscribed = True
-          AND role != 'admin'
+          AND role != 'admin'{where_sql}
         ORDER BY COALESCE(subscription_started_at, registered_at) DESC;
     """)
     with engine.connect() as conn:
-        rows = conn.execute(query).fetchall()
+        rows = conn.execute(query, params).fetchall()
     members = []
     for row in rows:
         members.append({
@@ -274,36 +304,39 @@ def _ensure_unsubscriptions_email(engine):
         print(f"admin_reports: ensure unsubscriptions.email warning: {e}")
 
 
-def get_unsubscribed_members(engine):
+def get_unsubscribed_members(engine, date_from=None, date_to=None):
     """
     Returns members who have unsubscribed, along with their reason for
     unsubscription and the subscription period (days/weeks/months/years).
     Joins the users table with the unsubscriptions feedback table.
+    `date_from`/`date_to` restrict the list to unsubscriptions that happened
+    inside that date range.
 
     The join is keyed on the user's unique email address (not the display
     name), so reasons can never be attached to the wrong person and
     co-named users are all represented.
     """
-    query = text("""
+    where_sql, params = _range_where("u.unsubscribed_at", date_from, date_to)
+    query = text(f"""
         SELECT u.full_name, u.email, u.subscription_started_at, u.registered_at,
                u.unsubscribed_at, un.reason, un.channel
         FROM users u
         LEFT JOIN unsubscriptions un ON un.email = u.email
         WHERE u.is_subscribed = False
-          AND u.unsubscribed_at IS NOT NULL
+          AND u.unsubscribed_at IS NOT NULL{where_sql}
         ORDER BY u.unsubscribed_at DESC;
     """)
     members = []
     try:
         with engine.connect() as conn:
-            rows = conn.execute(query).fetchall()
+            rows = conn.execute(query, params).fetchall()
     except Exception as e:
         # Older databases may not have unsubscriptions.email yet. Apply the
         # idempotent migration and retry instead of failing the report.
         print(f"admin_reports: unsubscribed query warning ({e}); applying email migration")
         _ensure_unsubscriptions_email(engine)
         with engine.connect() as conn:
-            rows = conn.execute(query).fetchall()
+            rows = conn.execute(query, params).fetchall()
     seen = set()
     for row in rows:
         # De-duplicate by email (a user may have multiple feedback rows)
@@ -359,24 +392,28 @@ def get_sms_delivery_logs(engine, limit: int = 100):
     return logs
 
 
-def get_alert_dispatch_logs(engine, limit: int = 500):
+def get_alert_dispatch_logs(engine, limit: int = 500, date_from=None, date_to=None):
     """
     Returns the most recent tracked SMS/email dispatches (newest first) from
     alert_dispatch_logs. Each row carries the recipient identifier (phone
     number for SMS, email address for email), the exact message that was sent,
     and the recipient's subscription status at dispatch time.
+    `date_from`/`date_to` restrict the list to dispatches inside that range.
     """
-    query = text("""
+    where_sql, params = _range_where("dispatched_at", date_from, date_to)
+    params["limit"] = limit
+    query = text(f"""
         SELECT dispatch_code, dispatched_at, channel, recipient, message_type,
                message_content, subscription_status, status, error_detail
         FROM alert_dispatch_logs
+        WHERE 1=1{where_sql}
         ORDER BY dispatched_at DESC
         LIMIT :limit;
     """)
     logs = []
     try:
         with engine.connect() as conn:
-            rows = conn.execute(query, {"limit": limit}).fetchall()
+            rows = conn.execute(query, params).fetchall()
         for row in rows:
             logs.append({
                 "dispatch_code": row.dispatch_code or "",

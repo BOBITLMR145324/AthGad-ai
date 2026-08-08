@@ -1960,6 +1960,9 @@ def admin_report_pdf(report_type):
     Only admins may access this endpoint (enforced by the decorator),
     and every download is recorded in the audit log. Rate-limited to
     prevent unbounded report generation.
+
+    Optional query params `date_from` and `date_to` (YYYY-MM-DD) restrict every
+    section of the report to records inside that inclusive time span.
     """
     allowed = {
         "predicted_calamities",
@@ -1974,12 +1977,35 @@ def admin_report_pdf(report_type):
         flash("Unknown report type requested.", "error")
         return redirect(url_for('admin_reports'))
 
+    # Parse + validate the optional report time span (inclusive date range).
+    date_from_raw = request.args.get('date_from', '').strip()
+    date_to_raw = request.args.get('date_to', '').strip()
+    try:
+        date_from = datetime.strptime(date_from_raw, "%Y-%m-%d").date() if date_from_raw else None
+        date_to = datetime.strptime(date_to_raw, "%Y-%m-%d").date() if date_to_raw else None
+    except ValueError:
+        audit("admin_report", actor=session.get('user_email'),
+              target=report_type, outcome="invalid",
+              details={"reason": "bad_date_format"})
+        flash("Invalid date range. Dates must use the YYYY-MM-DD format.", "error")
+        return redirect(url_for('admin_reports'))
+    if date_from and date_to and date_from > date_to:
+        audit("admin_report", actor=session.get('user_email'),
+              target=report_type, outcome="invalid",
+              details={"reason": "from_after_to"})
+        flash("The start date cannot be after the end date.", "error")
+        return redirect(url_for('admin_reports'))
+
     try:
         engine = get_db_engine()
-        pdf_bytes = build_admin_report(engine, report_type)
+        pdf_bytes = build_admin_report(
+            engine, report_type, date_from=date_from, date_to=date_to,
+        )
 
         audit("admin_report", actor=session.get('user_email'),
-              target=report_type, outcome="generated")
+              target=report_type, outcome="generated",
+              details={"date_from": str(date_from) if date_from else None,
+                       "date_to": str(date_to) if date_to else None})
 
         filenames = {
             "predicted_calamities": "predicted_calamities_report.pdf",
@@ -1988,12 +2014,17 @@ def admin_report_pdf(report_type):
             "unsubscribed_members": "unsubscribed_members_report.pdf",
             "alert_dispatch_logs": "alert_dispatch_logs_report.pdf",
         }
+        if date_from or date_to:
+            span = f"_{date_from or 'start'}_{date_to or 'today'}"
+            filename = filenames[report_type].replace(".pdf", f"{span}.pdf")
+        else:
+            filename = filenames[report_type]
         response = app.response_class(
             pdf_bytes,
             mimetype='application/pdf',
         )
         response.headers['Content-Disposition'] = (
-            f'attachment; filename={filenames[report_type]}'
+            f'attachment; filename={filename}'
         )
         # Always regenerate: never let browsers/ISPs serve a stale cached copy.
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
