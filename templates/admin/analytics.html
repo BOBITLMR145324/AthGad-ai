@@ -157,11 +157,16 @@
         <!-- Risk distribution pie -->
         <div class="bg-slate-950 border border-slate-800 rounded-2xl p-8">
           <div class="flex items-center justify-between mb-6">
-            <h3
-              class="text-emerald-400 text-xs font-bold uppercase tracking-wider"
-            >
-              Risk Level Distribution
-            </h3>
+            <div>
+              <h3
+                class="text-emerald-400 text-xs font-bold uppercase tracking-wider"
+              >
+                County Risk Distribution
+              </h3>
+              <p class="text-[10px] text-slate-500 mt-1">
+                Slice size = predicted risk score (%). Colored by risk level.
+              </p>
+            </div>
             <span class="text-[10px] text-slate-500"
               >{{ analytics.status_board | length }} counties</span
             >
@@ -172,7 +177,7 @@
               class="hidden h-full flex items-center justify-center text-xs text-rose-300"
             >
               Chart could not load — Chart.js (CDN) is unreachable. The
-              distribution counts below are still live.
+              distribution counts, tables and summary below are still live.
             </div>
             <canvas
               id="riskPieChart"
@@ -502,7 +507,10 @@
           );
         }
 
-        // Render (or re-render) the Risk Level Distribution doughnut chart.
+        // Render (or re-render) the per-county risk doughnut chart. Every
+        // covered county gets its own slice whose size tracks its predicted
+        // risk score (0-100%), colored by risk level, so all 8 counties are
+        // represented and the portions update live on every refresh.
         function renderPieChart() {
           var pieCtx = document.getElementById("riskPieChart");
           var fallback = document.getElementById("pie-chart-unavailable");
@@ -516,19 +524,37 @@
           }
           if (fallback) fallback.classList.add("hidden");
           if (pieChartInstance) pieChartInstance.destroy();
+
+          var counties = analytics.status_board.map(function (c) {
+            return c.county;
+          });
+          var scores = analytics.status_board.map(function (c) {
+            return c.score_pct || 0;
+          });
+          var colors = analytics.status_board.map(function (c) {
+            return c.risk_level === "High"
+              ? "#ef4444"
+              : c.risk_level === "Medium"
+                ? "#f59e0b"
+                : "#10b981";
+          });
+          var borders = colors.map(function (c) {
+            return c === "#ef4444"
+              ? "#7f1d1d"
+              : c === "#f59e0b"
+                ? "#78350f"
+                : "#064e3b";
+          });
+
           pieChartInstance = new Chart(pieCtx, {
             type: "doughnut",
             data: {
-              labels: ["Low", "Medium", "High"],
+              labels: counties,
               datasets: [
                 {
-                  data: [
-                    analytics.risk_distribution.Low,
-                    analytics.risk_distribution.Medium,
-                    analytics.risk_distribution.High,
-                  ],
-                  backgroundColor: ["#10b981", "#f59e0b", "#ef4444"],
-                  borderColor: ["#064e3b", "#78350f", "#7f1d1d"],
+                  data: scores,
+                  backgroundColor: colors,
+                  borderColor: borders,
                   borderWidth: 2,
                 },
               ],
@@ -537,13 +563,30 @@
               responsive: true,
               maintainAspectRatio: false,
               plugins: {
-                legend: { position: "bottom", labels: { color: "#94a3b8" } },
+                legend: {
+                  position: "bottom",
+                  labels: {
+                    color: "#94a3b8",
+                    boxWidth: 12,
+                    padding: 10,
+                    font: { size: 10 },
+                  },
+                },
+                tooltip: {
+                  callbacks: {
+                    label: function (ctx) {
+                      return " " + ctx.label + ": " + ctx.parsed + "% risk";
+                    },
+                  },
+                },
               },
             },
           });
         }
 
-        // Render (or re-render) the County Risk bar chart.
+        // Render (or re-render) the County Risk bar chart. All 8 counties are
+        // shown, sorted by risk score (highest first) so the worst county is
+        // always on top. Bar lengths track the live score on every refresh.
         function renderBarChart() {
           var barCtx = document.getElementById("countyBarChart");
           var fallback = document.getElementById("chart-unavailable");
@@ -557,19 +600,31 @@
           }
           if (fallback) fallback.classList.add("hidden");
           if (barChartInstance) barChartInstance.destroy();
-          var counties = analytics.status_board.map(function (c) {
+
+          var board = analytics.status_board.slice().sort(function (a, b) {
+            return (b.score_pct || 0) - (a.score_pct || 0);
+          });
+          var counties = board.map(function (c) {
             return c.county;
           });
-          var scores = analytics.status_board.map(function (c) {
-            return c.score_pct;
+          var scores = board.map(function (c) {
+            return c.score_pct || 0;
           });
-          var colors = analytics.status_board.map(function (c) {
+          var colors = board.map(function (c) {
             return c.risk_level === "High"
               ? "#ef4444"
               : c.risk_level === "Medium"
                 ? "#f59e0b"
                 : "#10b981";
           });
+          var borders = colors.map(function (c) {
+            return c === "#ef4444"
+              ? "#7f1d1d"
+              : c === "#f59e0b"
+                ? "#78350f"
+                : "#064e3b";
+          });
+
           barChartInstance = new Chart(barCtx, {
             type: "bar",
             data: {
@@ -579,7 +634,10 @@
                   label: "Risk Score (%)",
                   data: scores,
                   backgroundColor: colors,
+                  borderColor: borders,
+                  borderWidth: 1,
                   borderRadius: 6,
+                  maxBarThickness: 22,
                 },
               ],
             },
@@ -590,12 +648,27 @@
               scales: {
                 x: {
                   beginAtZero: true,
+                  suggestedMax: 100,
                   grid: { color: "#1e293b" },
-                  ticks: { color: "#94a3b8" },
+                  ticks: {
+                    color: "#94a3b8",
+                    callback: function (v) {
+                      return v + "%";
+                    },
+                  },
                 },
                 y: { grid: { display: false }, ticks: { color: "#94a3b8" } },
               },
-              plugins: { legend: { display: false } },
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    label: function (ctx) {
+                      return " Risk score: " + ctx.parsed.x + "%";
+                    },
+                  },
+                },
+              },
             },
           });
         }
