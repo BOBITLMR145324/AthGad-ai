@@ -317,7 +317,7 @@
               Refresh
             </button>
           </div>
-          <div class="h-72">
+          <div class="h-[440px]">
             <div
               id="chart-unavailable"
               class="hidden h-full flex items-center justify-center text-xs text-rose-300"
@@ -637,7 +637,8 @@
                   borderColor: borders,
                   borderWidth: 1,
                   borderRadius: 6,
-                  maxBarThickness: 22,
+                  barPercentage: 0.7,
+                  maxBarThickness: 26,
                 },
               ],
             },
@@ -645,6 +646,7 @@
               responsive: true,
               maintainAspectRatio: false,
               indexAxis: "y",
+              layout: { padding: { top: 4, bottom: 4 } },
               scales: {
                 x: {
                   beginAtZero: true,
@@ -657,7 +659,15 @@
                     },
                   },
                 },
-                y: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+                y: {
+                  grid: { display: false },
+                  ticks: {
+                    color: "#cbd5e1",
+                    font: { size: 11, weight: "600" },
+                    autoSkip: false,
+                    padding: 8,
+                  },
+                },
               },
               plugins: {
                 legend: { display: false },
