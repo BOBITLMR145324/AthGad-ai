@@ -240,7 +240,7 @@
           >
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs">
+          <table class="w-full table-auto text-left text-xs">
             <thead>
               <tr class="text-slate-400 border-b border-slate-800">
                 <th class="px-4 py-3 font-semibold">Time</th>
@@ -277,7 +277,7 @@
           >
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs">
+          <table class="w-full table-auto text-left text-xs">
             <thead>
               <tr class="text-slate-400 border-b border-slate-800">
                 <th class="px-4 py-3 font-semibold">Time</th>
@@ -334,7 +334,8 @@
         color: #94a3b8;
       }
       .msg-cell {
-        max-width: 320px;
+        min-width: 0;
+        max-width: 360px;
         white-space: normal;
         word-break: break-word;
         color: #94a3b8;
@@ -439,10 +440,10 @@
           .map(function (l) {
             return (
               "<tr class='border-b border-slate-800/60 hover:bg-slate-800/40'>" +
-              "<td class='px-4 py-2.5 text-slate-400 whitespace-nowrap'>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
               esc(l.logged_at) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-200 whitespace-nowrap'>" +
+              "<td class='px-4 py-2.5 text-slate-200'>" +
               esc(l.phone_number) +
               "</td>" +
               "<td class='px-4 py-2.5 text-slate-300'>" +
@@ -466,8 +467,12 @@
               "<td class='px-4 py-2.5 text-slate-400'>" +
               esc(l.cost) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-4 py-2.5 text-slate-400' title='" +
               esc(l.message_id) +
+              "'>" +
+              "<span class='block truncate max-w-[170px]'>" +
+              esc(l.message_id) +
+              "</span>" +
               "</td>" +
               "<td class='px-4 py-2.5 text-rose-300/80 msg-cell'>" +
               esc(l.error_detail) +
@@ -489,13 +494,13 @@
           .map(function (l) {
             return (
               "<tr class='border-b border-slate-800/60 hover:bg-slate-800/40'>" +
-              "<td class='px-4 py-2.5 text-slate-400 whitespace-nowrap'>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
               esc(l.dispatched_at) +
               "</td>" +
               "<td class='px-4 py-2.5'>" +
               channelBadge(l.channel) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-200 whitespace-nowrap'>" +
+              "<td class='px-4 py-2.5 text-slate-200'>" +
               esc(l.recipient) +
               "</td>" +
               "<td class='px-4 py-2.5 text-slate-400'>" +
