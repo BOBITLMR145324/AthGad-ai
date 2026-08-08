@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EarthGuard AI - Login</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>AthGad AI - Login</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
   </head>
   <body
     class="bg-slate-950 text-slate-100 flex items-center justify-center min-h-screen px-4"
@@ -22,7 +22,7 @@
 
           <!-- Title -->
           <span class="text-white font-black tracking-wider text-xl uppercase"
-            >EarthGuard AI</span
+            >AthGad AI</span
           >
         </div>
         <p class="text-slate-400 text-sm">
@@ -46,6 +46,7 @@
 
       <!-- Login Form -->
       <form action="/login" method="POST" class="space-y-5">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <div>
           <label
             class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2"

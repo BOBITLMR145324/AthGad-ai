@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EarthGuard AI - Share Your Feedback</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>AthGad AI - Share Your Feedback</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
   </head>
   <body
     class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4"
@@ -41,6 +41,7 @@
         method="POST"
         class="space-y-6"
       >
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <!-- Suggested Answers -->
         <div>
           <label

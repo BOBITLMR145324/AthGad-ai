@@ -3,29 +3,39 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EarthGuard AI - Early Warning Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <title>AthGad AI - Early Warning Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body class="bg-slate-900 text-slate-100 font-sans min-h-screen">
     <header
-      class="border-b border-slate-800 bg-slate-950 p-4 sticky top-0 z-50"
+      class="border-b border-slate-800 bg-slate-950 px-6 py-2.5 sticky top-0 z-50"
     >
       <div class="max-w-7xl mx-auto flex justify-between items-center">
         <!-- LEFT BRANDING SECTION: Clean Animated Logo + Title -->
         <div class="flex items-center space-x-3">
-          <div class="w-11 h-11 flex-shrink-0 flex items-center justify-center">
+          <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center">
             {% include '_logo.html' %}
           </div>
           <h1
-            class="text-xl font-black tracking-wider text-emerald-400 uppercase"
+            class="text-lg font-black tracking-wider text-emerald-400 uppercase"
           >
-            EARTHGUARD AI
+            ATHGAD AI
           </h1>
         </div>
 
         <!-- RIGHT CONTROLS SECTION -->
         <div class="flex items-center space-x-4">
+          {% if session.get('user_role') == 'admin' %}
+          <!-- Admin Workspace -->
+          <a
+            href="/admin"
+            class="bg-rose-600 hover:bg-rose-500 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase shadow-md shadow-rose-950/20 transition duration-200 cursor-pointer"
+          >
+            Admin Workspace
+          </a>
+          {% endif %}
+
           <!-- Get SMS Alerts -->
           <a
             href="/subscribe"
@@ -84,8 +94,8 @@
       </div>
     </header>
 
-    <main class="max-w-7xl mx-auto p-6 space-y-6">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <main class="max-w-7xl mx-auto px-8 py-10 space-y-10">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div
           class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between"
         >
@@ -160,9 +170,9 @@
         </div>
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div
-          class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between space-y-4"
+          class="bg-slate-950 border border-slate-800 p-7 rounded-xl flex flex-col justify-between space-y-5"
         >
           <div>
             <div class="border-b border-slate-800 pb-3">
@@ -232,7 +242,7 @@
                 <th class="py-4 px-6 text-left">Risk Level</th>
               </tr>
             </thead>
-            <tbody id="alert-table-body">
+            <tbody id="historical-alerts-rows">
               <tr>
                 <td colspan="5" class="p-4 text-center text-slate-600">
                   Loading alerts...

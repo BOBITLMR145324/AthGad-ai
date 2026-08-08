@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EarthGuard AI - Premium Alerts</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+<title>AthGad AI - Premium Alerts</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
 
@@ -55,7 +55,8 @@
             </div>
         {% endif %}
 
-        <form action="/subscribe" method="POST" class="space-y-6">
+<form action="/subscribe" method="POST" class="space-y-6">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             
             <!-- Notification Methods Selection -->
             <div>
@@ -97,12 +98,12 @@
                         <option value="EUR">EUR - Euro</option>
                     </select>
                 </div>
-                <div>
+<div>
                     <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">3. Payment Method</label>
                     <select name="payment_method" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-                        <option value="mpesa">M-PESA (STK Push)</option>
-                        <option value="card">Credit / Debit Card</option>
-                        <option value="airtime">Airtime Deduction</option>
+                        <option value="mpesa">📱 M-PESA</option>
+                        <option value="card">💳 Credit / Debit Card</option>
+                        <option value="airtime">📶 Airtime Deduction</option>
                     </select>
                 </div>
             </div>
@@ -128,9 +129,9 @@
                 <a href="/dashboard" class="flex-1 border border-slate-800 hover:bg-slate-800 text-slate-300 font-bold flex items-center justify-center py-3 rounded-lg text-xs uppercase tracking-wider transition">
                     Return to Dashboard
                 </a>
-                <button type="submit" class="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold flex items-center justify-center py-3 rounded-lg text-xs uppercase tracking-wider transition shadow-lg shadow-emerald-950/20 cursor-pointer">
+<button type="submit" class="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold flex items-center justify-center py-3 rounded-lg text-xs uppercase tracking-wider transition shadow-lg shadow-emerald-950/20 cursor-pointer">
                     {% if payment_status == 'expired' %}
-                        Pay 150 KES with M-PESA
+                        📱 Pay 150 KES with M-PESA
                     {% else %}
                         Save My Choices
                     {% endif %}

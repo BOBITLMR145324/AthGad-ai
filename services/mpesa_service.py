@@ -75,7 +75,7 @@ def initiate_stk_push(phone_number, amount, account_reference):
         "PhoneNumber": formatted_phone,
         "CallBackURL": CALLBACK_URL,
         "AccountReference": account_reference[:12],  # Safaricom truncates max 12 chars
-        "TransactionDesc": "EarthGuard Premium Subscription"
+        "TransactionDesc": "AthGad Premium Subscription"
     }
 
     print(f"📲 Initiating M-PESA STK Push to {formatted_phone} for KES {amount}...")

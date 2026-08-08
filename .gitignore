@@ -17,3 +17,5 @@ __pycache__/
 # OS metadata
 .DS_Store
 Thumbs.db
+# Logs (audit trail + app logs)
+logs/

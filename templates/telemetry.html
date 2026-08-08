@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Regional Risk Status - EarthGuard AI</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Regional Risk Status - AthGad AI</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
     <link
       href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
@@ -20,37 +20,37 @@
   >
     <!-- Header Navigation -->
     <header
-      class="border-b border-slate-800 bg-slate-950/80 backdrop-blur-md p-4 sticky top-0 z-50"
+      class="border-b border-slate-800 bg-slate-950/80 backdrop-blur-md py-3 px-4 sticky top-0 z-50"
     >
       <div class="max-w-7xl mx-auto flex justify-between items-center">
         <!-- Brand -->
-        <a href="/" class="flex items-center space-x-3">
-          <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center">
+        <a href="/" class="flex items-center space-x-3 no-underline">
+          <div class="w-9 h-9 flex-shrink-0 flex items-center justify-center">
             {% include '_logo.html' %}
           </div>
           <div>
             <h1
-              class="text-xl font-black tracking-wider text-emerald-400 uppercase"
+              class="text-lg leading-tight font-black tracking-wider text-emerald-400 uppercase"
             >
-              EARTHGUARD AI
+              ATHGAD AI
             </h1>
-            <p class="text-[10px] text-slate-400 font-medium">
+            <p class="text-[10px] text-slate-400 font-medium leading-tight">
               Public Early Warning System
             </p>
           </div>
         </a>
 
         <!-- Navigation Controls -->
-        <div class="flex items-center space-x-4">
+        <div class="flex items-center space-x-3">
           <a
             href="/subscribe"
-            class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2 rounded-lg text-xs tracking-wider uppercase transition shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+            class="no-underline bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2 rounded-lg text-xs tracking-wider uppercase transition shadow-[0_0_15px_rgba(16,185,129,0.3)]"
           >
             Get SMS Alerts
           </a>
           <a
             href="/login"
-            class="text-slate-300 hover:text-white font-semibold text-xs tracking-wider uppercase px-3 py-2 border border-slate-800 rounded-lg hover:bg-slate-900 transition"
+            class="no-underline text-slate-300 hover:text-white font-semibold text-xs tracking-wider uppercase px-3 py-2 border border-slate-800 rounded-lg hover:bg-slate-900 transition"
           >
             Sign In
           </a>
@@ -58,10 +58,10 @@
       </div>
     </header>
 
-    <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-8 space-y-10">
+    <main class="flex-1 max-w-7xl w-full mx-auto px-8 py-10 space-y-12">
       <!-- Page Intro Hero -->
       <div
-        class="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-slate-800/80 pb-8"
+        class="flex flex-col md:flex-row md:items-end justify-between gap-8 border-b border-slate-800/80 pb-10"
       >
         <div>
           <div
@@ -229,32 +229,56 @@
           </div>
 
           <!-- Interactive Filters -->
-          <div class="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0">
+          <div class="flex items-center gap-2 overflow-x-auto">
+            <button
+              id="btn-refresh"
+              onclick="refreshTelemetry()"
+              class="no-underline cursor-pointer bg-slate-800 hover:bg-emerald-600 text-emerald-300 hover:text-white font-bold px-3.5 py-1.5 rounded-lg text-xs transition flex items-center gap-1.5"
+            >
+              <svg
+                class="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              Refresh
+            </button>
+            <span
+              class="hidden sm:inline-block text-[10px] text-slate-500"
+              id="refresh-status"
+            ></span>
             <button
               onclick="filterCounties('all')"
               id="btn-all"
-              class="filter-btn active bg-emerald-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs transition"
+              class="filter-btn active bg-emerald-500 text-slate-950 font-bold px-3.5 py-1.5 rounded-lg text-xs transition shadow-md shadow-emerald-950/30"
             >
               All Counties
             </button>
             <button
               onclick="filterCounties('high')"
               id="btn-high"
-              class="filter-btn bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+              class="filter-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition"
             >
               High Risk
             </button>
             <button
               onclick="filterCounties('climate')"
               id="btn-climate"
-              class="filter-btn bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+              class="filter-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition"
             >
               Climate Focus
             </button>
             <button
               onclick="filterCounties('health')"
               id="btn-health"
-              class="filter-btn bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+              class="filter-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition"
             >
               Health Focus
             </button>
@@ -266,9 +290,20 @@
           class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5"
           id="county-grid"
         >
-          {% for item in status_board %}
+          {% for item in status_board %} {% set bar_color = 'bg-rose-500' if
+          item.risk_level == 'High' else ('bg-amber-400' if item.risk_level ==
+          'Medium' else 'bg-emerald-400') %} {% set top_color = 'text-rose-400'
+          if item.risk_level == 'High' else ('text-amber-400' if item.risk_level
+          == 'Medium' else 'text-emerald-400') %} {% set badge_color =
+          'bg-rose-500/20 text-rose-300 border-rose-500/30' if item.risk_level
+          == 'High' else ('bg-amber-500/20 text-amber-300 border-amber-500/30'
+          if item.risk_level == 'Medium' else 'bg-emerald-500/20
+          text-emerald-300 border-emerald-500/30') %} {% set card_border =
+          'border-rose-500/40' if item.risk_level == 'High' else
+          ('border-amber-500/40' if item.risk_level == 'Medium' else
+          'border-slate-800') %}
           <div
-            class="county-card {{ 'high' if item.risk_level == 'High' else '' }} {{ item.threat_category }} bg-slate-900/80 hover:bg-slate-900 border {{ 'border-amber-500/40' if item.risk_level == 'High' else ('border-rose-500/40' if item.threat_category == 'health' else 'border-slate-800') }} rounded-2xl p-5 space-y-4 transition duration-200"
+            class="county-card {{ 'high' if item.risk_level == 'High' else '' }} {{ item.threat_category }} bg-slate-900/80 hover:bg-slate-900 border {{ card_border }} rounded-2xl p-5 space-y-4 transition duration-200"
           >
             <div class="flex justify-between items-start">
               <div>
@@ -278,7 +313,7 @@
                 <span class="text-[11px] text-slate-400">Eastern Region</span>
               </div>
               <span
-                class="px-2 py-0.5 rounded {{ 'bg-amber-500/20 text-amber-300 border-amber-500/30' if item.risk_level == 'High' else ('bg-rose-500/20 text-rose-300 border-rose-500/30' if item.risk_level == 'Medium' else 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30') }} font-bold text-[10px] uppercase border"
+                class="px-2 py-0.5 rounded {{ badge_color }} font-bold text-[10px] uppercase border"
               >
                 {{ item.risk_level }}
               </span>
@@ -286,8 +321,7 @@
             <div class="space-y-2">
               <div class="flex justify-between text-xs">
                 <span class="text-slate-400">Calculated Risk Index</span>
-                <span
-                  class="font-bold {{ 'text-amber-400' if item.risk_level == 'High' else ('text-rose-400' if item.risk_level == 'Medium' else 'text-emerald-400') }}"
+                <span class="font-bold {{ top_color }}"
                   >{{ item.score_pct }}%</span
                 >
               </div>
@@ -295,7 +329,8 @@
                 class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden"
               >
                 <div
-                  class="{{ 'bg-amber-400' if item.risk_level == 'High' else ('bg-rose-400' if item.risk_level == 'Medium' else 'bg-emerald-400') }} h-full rounded-full w-[{{ item.score_pct }}%]"
+                  class="{{ bar_color }} h-full rounded-full transition-all duration-500"
+                  data-score="{{ item.score_pct }}"
                 ></div>
               </div>
             </div>
@@ -324,7 +359,7 @@
         </div>
         <a
           href="/subscribe"
-          class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-6 py-3.5 rounded-xl text-sm uppercase tracking-wider transition transform hover:scale-105 flex-shrink-0"
+          class="no-underline bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-6 py-3.5 rounded-xl text-sm uppercase tracking-wider transition transform hover:scale-105 flex-shrink-0"
         >
           Subscribe For Free Alerts
         </a>
@@ -333,6 +368,143 @@
 
     <!-- Filter Script -->
     <script>
+      // Set the dynamic risk bar width from the data-score attribute
+      function applyBarWidths() {
+        document.querySelectorAll("[data-score]").forEach(function (bar) {
+          var score = bar.getAttribute("data-score");
+          if (score && !isNaN(parseFloat(score))) {
+            bar.style.width = score + "%";
+          }
+        });
+      }
+      document.addEventListener("DOMContentLoaded", applyBarWidths);
+
+      // Refresh the live telemetry data for all counties (no login required).
+      function refreshTelemetry() {
+        var statusEl = document.getElementById("refresh-status");
+        if (statusEl) statusEl.textContent = "Refreshing...";
+
+        fetch("/api/v1/telemetry/refresh")
+          .then(function (res) {
+            return res.json();
+          })
+          .then(function (data) {
+            if (data.status !== "ok") {
+              if (statusEl)
+                statusEl.textContent = "Refresh failed. Please try again.";
+              return;
+            }
+
+            // Update global summary numbers.
+            var highRiskText = document.querySelector(".min-w-\\[280px\\] p");
+            if (highRiskText) {
+              highRiskText.textContent =
+                data.high_risk_count + " Counties at High Risk";
+            }
+
+            // Update climate & health average cards.
+            var climateSpan = document.querySelector(
+              ".to-amber-950\\/30 .text-2xl",
+            );
+            var healthSpan = document.querySelector(
+              ".to-rose-950\\/30 .text-2xl",
+            );
+            if (climateSpan) climateSpan.textContent = data.avg_climate + "%";
+            if (healthSpan) healthSpan.textContent = data.avg_health + "%";
+
+            // Update the "Updated:" timestamps.
+            document
+              .querySelectorAll('span[class*="text-xs text-slate-500"]')
+              .forEach(function (el) {
+                if (el.textContent.indexOf("Updated:") === 0) {
+                  el.textContent = "Updated: " + data.last_sync;
+                }
+              });
+
+            // Rebuild the county grid from the fresh status board.
+            var grid = document.getElementById("county-grid");
+            if (grid && data.status_board) {
+              grid.innerHTML = buildCountyCards(data.status_board);
+              applyBarWidths();
+            }
+
+            if (statusEl) statusEl.textContent = "Updated " + data.last_sync;
+          })
+          .catch(function () {
+            if (statusEl)
+              statusEl.textContent = "Refresh failed. Please try again.";
+          });
+      }
+
+      // Build county card HTML for a status board item.
+      function buildCountyCards(items) {
+        return items
+          .map(function (item) {
+            var barColor =
+              item.risk_level === "High"
+                ? "bg-rose-500"
+                : item.risk_level === "Medium"
+                  ? "bg-amber-400"
+                  : "bg-emerald-400";
+            var topColor =
+              item.risk_level === "High"
+                ? "text-rose-400"
+                : item.risk_level === "Medium"
+                  ? "text-amber-400"
+                  : "text-emerald-400";
+            var badgeColor =
+              item.risk_level === "High"
+                ? "bg-rose-500/20 text-rose-300 border-rose-500/30"
+                : item.risk_level === "Medium"
+                  ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                  : "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
+            var cardBorder =
+              item.risk_level === "High"
+                ? "border-rose-500/40"
+                : item.risk_level === "Medium"
+                  ? "border-amber-500/40"
+                  : "border-slate-800";
+            var highClass = item.risk_level === "High" ? "high" : "";
+
+            return (
+              '<div class="county-card ' +
+              highClass +
+              " " +
+              item.threat_category +
+              " bg-slate-900/80 hover:bg-slate-900 border " +
+              cardBorder +
+              ' rounded-2xl p-5 space-y-4 transition duration-200">' +
+              '<div class="flex justify-between items-start">' +
+              '<div><h3 class="font-bold text-white text-base">' +
+              item.county +
+              ' County</h3><span class="text-[11px] text-slate-400">Eastern Region</span></div>' +
+              '<span class="px-2 py-0.5 rounded ' +
+              badgeColor +
+              ' font-bold text-[10px] uppercase border">' +
+              item.risk_level +
+              "</span></div>" +
+              '<div class="space-y-2">' +
+              '<div class="flex justify-between text-xs"><span class="text-slate-400">Calculated Risk Index</span>' +
+              '<span class="font-bold ' +
+              topColor +
+              '">' +
+              item.score_pct +
+              "%</span></div>" +
+              '<div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">' +
+              '<div class="' +
+              barColor +
+              ' h-full rounded-full transition-all duration-500" data-score="' +
+              item.score_pct +
+              '"></div></div></div>' +
+              '<div class="text-[11px] text-slate-400 pt-2 border-t border-slate-800 flex justify-between">' +
+              "<span>Threat: " +
+              item.primary_threat +
+              "</span></div></div>"
+            );
+          })
+          .join("");
+      }
+
       function filterCounties(type) {
         const cards = document.querySelectorAll(".county-card");
         const buttons = document.querySelectorAll(".filter-btn");

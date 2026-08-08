@@ -5,6 +5,14 @@ from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Storage pipeline (wired lazily in __main__ to avoid a hard import-time
+# dependency and keep the ingestion services importable in any context).
+try:
+    from core.processor import AthGadDataProcessor
+except ImportError:
+    AthGadDataProcessor = None
+
+
 class SpaceWeatherIngestionService:
     def __init__(self):
         # Target NOAA 3-Day Planetary Kp Index Forecast Endpoint
@@ -31,7 +39,18 @@ class SpaceWeatherIngestionService:
             print(f"An infrastructure transmission exception occurred while requesting {exc.request.url!r}.")
             return []
 
+
 if __name__ == "__main__":
     space_service = SpaceWeatherIngestionService()
     recent_kp_array = space_service.fetch_geomagnetic_indices()
     print("Latest Telemetry Samples Ingested:\n", recent_kp_array)
+
+    # Persist the fetched space-weather records so the analytics engine has
+    # real geomagnetic data instead of only baseline fallbacks.
+    if recent_kp_array and AthGadDataProcessor is not None:
+        processor = AthGadDataProcessor()
+        processor.process_and_store_space_weather(recent_kp_array)
+        print("Space Weather Ingestion Pipeline: data persisted to space_weather_records.")
+    else:
+        print("Space Weather Ingestion Pipeline: no data to store (or processor unavailable).")
+

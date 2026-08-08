@@ -10,9 +10,21 @@ from sqlalchemy import text
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-class EarthGuardDataProcessor:
+class AthGadDataProcessor:
     def __init__(self):
         self.engine = get_db_engine()
+
+    def _to_sql(self, df: pd.DataFrame, table: str):
+        """
+        Safely appends a DataFrame to a database table.
+        Returns True on success, False on any database error.
+        """
+        try:
+            df.to_sql(table, con=self.engine, if_exists='append', index=False)
+            return True
+        except Exception as e:
+            print(f"Processor: Could not write to '{table}': {e}")
+            return False
 
     def process_and_store_climate(self, raw_climate_json: dict):
         if not raw_climate_json or 'daily' not in raw_climate_json:
@@ -33,46 +45,67 @@ class EarthGuardDataProcessor:
         df.dropna(subset=['timestamp'], inplace=True)
         df.fillna(df.mean(numeric_only=True), inplace=True)
 
+        if df.empty:
+            print("Processor: No climate rows to store after cleaning.")
+            return
+
         # Append structured alphanumeric columns using Pandas to_sql
-        df.to_sql('climate_records', con=self.engine, if_exists='append', index=False)
+        if not self._to_sql(df, 'climate_records'):
+            return
 
         # Update the PostGIS geometry point columns for new coordinates using native SQL
-        with self.engine.begin() as connection:
-            connection.execute(text("""
-                UPDATE climate_records 
-                SET geom = ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)
-                WHERE geom IS NULL;
-            """), {"lon": lon, "lat": lat})
-            
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(text("""
+                    UPDATE climate_records 
+                    SET geom = ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)
+                    WHERE geom IS NULL;
+                """), {"lon": lon, "lat": lat})
+        except Exception as e:
+            print(f"Processor: Geometry update warning (PostGIS may be unavailable): {e}")
+
         print(f"Processor: Appended {len(df)} climate metrics via SQLAlchemy.")
 
     def process_and_store_space_weather(self, raw_kp_list: list):
-        if not raw_kp_list: 
+        if not raw_kp_list:
             return
-        
+
         df = pd.DataFrame(raw_kp_list)
         df['timestamp'] = pd.to_datetime(df['time_tag'])
         df['kp_index'] = pd.to_numeric(df['kp_index'], errors='coerce')
         df = df[['timestamp', 'kp_index']].dropna()
 
+        if df.empty:
+            return
+
         # Stream directly to database table using SQLAlchemy connection pool
-        df.to_sql('space_weather_records', con=self.engine, if_exists='append', index=False)
+        if not self._to_sql(df, 'space_weather_records'):
+            return
         print(f"Processor: Synchronized {len(df)} space telemetry records via SQLAlchemy.")
 
     def process_and_store_health(self, raw_health_json_str: str):
         try:
             records = json.loads(raw_health_json_str)
-        except json.JSONDecodeError: 
+        except json.JSONDecodeError:
             return
 
         df = pd.DataFrame(records)
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df['reported_cases'] = pd.to_numeric(df['reported_cases'], errors='coerce').fillna(0).astype(int)
-        
+
         # Rename dataframe columns to exactly match database table definitions
         df.rename(columns={'facility_reporting_rate_pct': 'reporting_rate'}, inplace=True)
-        
-        df.to_sql('health_records', con=self.engine, if_exists='append', index=False)
+
+        # Drop the 'source' column — it does NOT exist in the health_records
+        # table schema and would cause an INSERT failure at write time.
+        if 'source' in df.columns:
+            df = df.drop(columns=['source'])
+
+        if df.empty:
+            return
+
+        if not self._to_sql(df, 'health_records'):
+            return
         print(f"Processor: Parsed {len(df)} health observations via SQLAlchemy.")
 
 if __name__ == "__main__":

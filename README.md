@@ -1,8 +1,8 @@
-# 🌍 EarthGuard AI
+# 🌍 AthGad AI
 
 **AI-Powered Early Warning System for Eastern Kenya**
 
-EarthGuard AI is an intelligent environmental early-warning platform that monitors climate, public-health, and geomagnetic signals to predict drought, flooding, landslides, and disease outbreaks across **8 counties in Eastern Kenya** — Kitui, Machakos, Makueni, Marsabit, Isiolo, Meru, Embu, and Tharaka-Nithi.
+AthGad AI is an intelligent environmental early-warning platform that monitors climate, public-health, and geomagnetic signals to predict drought, flooding, landslides, and disease outbreaks across **8 counties in Eastern Kenya** — Kitui, Machakos, Makueni, Marsabit, Isiolo, Meru, Embu, and Tharaka-Nithi.
 
 The system fuses multiple live data feeds, detects anomalies using an **Isolation Forest** machine-learning model, computes a composite regional risk score, and automatically dispatches **SMS and Email alerts** to registered citizens — before crisis points strike their farms and communities.
 
@@ -10,17 +10,20 @@ The system fuses multiple live data feeds, detects anomalies using an **Isolatio
 
 ## ✨ Key Features
 
-| Feature                                  | Description                                                                                                                        |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 🛰️ **Multi-Source Data Ingestion**       | Live climate data (Open-Meteo), public health surveillance records, and NOAA space-weather geomagnetic indices                     |
-| 🧠 **AI Risk Fusion Engine**             | Isolation Forest anomaly detection combined with a weighted multi-domain risk formula (Climate 40%, Health 40%, Space Weather 20%) |
-| 📍 **County-Level Advisory Registry**    | Localized, actionable safety guidance per county and hazard type (Severe Drought / Flooding & Landslides)                          |
-| 📲 **Tiered SMS Alerts**                 | Africa's Talking SMS gateway — premium subscribers get full actionable alerts; free users get baseline safety warnings             |
-| 📧 **Tiered Email Alerts**               | Rich HTML safety advisories with impact lists and proactive checklists                                                             |
-| 💳 **M-PESA Payments**                   | 30-day free trial, then 150 KES/month via Safaricom Daraja STK Push with async webhook callback                                    |
-| 🔔 **Subscribe / Unsubscribe Pipelines** | Web (email) and SMS (`STOP`) opt-out flows with optional feedback collection                                                       |
-| 📊 **Public Telemetry Dashboard**        | Live "Detected Threats & Expected Risks" board plus a county-by-county status grid                                                 |
-| 🔐 **Secure Accounts**                   | Password hashing, session-based authentication, parameterized database queries                                                     |
+| Feature                                  | Description                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🛰️ **Multi-Source Data Ingestion**       | Live climate data (Open-Meteo), public health surveillance records (synthetic or real Ministry-of-Health feed), and NOAA space-weather geomagnetic indices                                                                                                                 |
+| 🧠 **AI Risk Fusion Engine**             | Isolation Forest anomaly detection with per-county contamination tuning + adaptive seasonal weights + time-series risk forecasting (Climate 40%, Health 40%, Space Weather 20% defaults)                                                                                   |
+| 📍 **County-Level Advisory Registry**    | Localized, actionable safety guidance per county and hazard type (Severe Drought / Flooding & Landslides)                                                                                                                                                                  |
+| 📲 **Tiered SMS Alerts**                 | Africa's Talking SMS gateway — premium subscribers get full actionable alerts; free users get baseline safety warnings                                                                                                                                                     |
+| 📧 **Tiered Email Alerts**               | Rich HTML safety advisories with impact lists and proactive checklists                                                                                                                                                                                                     |
+| 💳 **M-PESA Payments**                   | 30-day free trial, then 150 KES/month via Safaricom Daraja STK Push with async webhook callback                                                                                                                                                                            |
+| 🔔 **Subscribe / Unsubscribe Pipelines** | Web (email) and SMS (`STOP`) opt-out flows with optional feedback collection                                                                                                                                                                                               |
+| 📊 **Public Telemetry Dashboard**        | Live "Detected Threats & Expected Risks" board plus a county-by-county status grid, with a **Refresh** button that pulls the latest processed data for all counties without logging in                                                                                     |
+| 🟢 **Dynamic Landing Risk Signals**      | The public landing page "Live Risk Signals" card is fully dynamic — it renders processed drought %, disease %, and hidden-pattern trend data from the live telemetry feed; the ATHGAD AI logo hangs above the card with its bottom tip "pinned" onto the frame like a hook |
+| 🎨 **Clean Navigation & UI**             | Compact landing header, and underlines removed from all links/buttons (brand, Sign In, Get Started, Get SMS Alerts, CTA) while keeping every element fully clickable                                                                                                       |
+| 🔐 **Secure Accounts**                   | Password hashing, session-based authentication, parameterized database queries                                                                                                                                                                                             |
+| 🛡️ **Admin Workspace**                   | Role-based admin access with PDF report generation (predicted calamities, disease outbreaks, subscribed/unsubscribed members) and system analytics for the covered counties                                                                                                |
 
 ---
 
@@ -60,7 +63,8 @@ The system fuses multiple live data feeds, detects anomalies using an **Isolatio
                                                      ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │                        WEB APPLICATION LAYER (Flask)                 │
-│   REST API: /api/v1/risk-status, /alerts/history, /health            │
+│   REST API: /api/v1/risk-status, /alerts/history, /health,           │
+│             /live-summary, /telemetry/refresh                        │
 │   Routes: /, /dashboard, /telemetry, /register, /login, /logout      │
 │           /subscribe, /unsubscribe, /unsubscribe/reason              │
 │   Webhooks: /api/v1/mpesa/callback, /api/v1/sms/callback             │
@@ -89,8 +93,8 @@ The system fuses multiple live data feeds, detects anomalies using an **Isolatio
 ### 1. Clone & Set Up
 
 ```bash
-git clone https://github.com/your-org/earthguard-ai.git
-cd earthguard-ai
+git clone https://github.com/your-org/AthGad-ai.git
+cd AthGad-ai
 
 # Create and activate a virtual environment
 python -m venv venv
@@ -113,7 +117,7 @@ DB_USER=postgres
 DB_PASSWORD=your_db_password
 DB_HOST=localhost
 DB_PORT=5432
-DB_NAME=earthguard_db
+DB_NAME=AthGad_db
 
 # ── Flask ────────────────────────────────
 FLASK_SECRET_KEY=change_me_to_a_long_random_string
@@ -125,13 +129,13 @@ REGIONAL_LONG=37.9942
 # ── Africa's Talking (SMS) ───────────────
 AT_USERNAME=sandbox
 AT_API_KEY=your_at_api_key
-AT_SENDER_ID=EARTHGUARD
+AT_SENDER_ID=AthGad
 AT_IS_SANDBOX=true
 
 # ── SMTP (Email) ─────────────────────────
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
-GMAIL_SENDER=alerts@earthguard.ai
+GMAIL_SENDER=alerts@AthGad.ai
 GMAIL_APP_PASSWORD=your_app_password
 
 # ── Safaricom Daraja (M-PESA) ────────────
@@ -149,7 +153,7 @@ MPESA_CALLBACK_URL=https://yourdomain.com/api/v1/mpesa/callback
 python core/db_init.py
 ```
 
-This creates the `earthguard_db` database (if missing), enables **PostGIS**, and builds all tables:
+This creates the `AthGad_db` database (if missing), enables **PostGIS**, and builds all tables:
 
 - `climate_records` — daily temperature, precipitation, evapotranspiration (+ geometry)
 - `health_records` — county-level disease cases (Malaria, Cholera)
@@ -226,23 +230,78 @@ The engine persists every calculation to `risk_alerts` and triggers notification
 
 ## 📡 API Endpoints
 
-| Method   | Endpoint                       | Description                                           |
-| -------- | ------------------------------ | ----------------------------------------------------- |
-| GET      | `/`                            | Public landing page                                   |
-| GET      | `/dashboard`                   | Authenticated user risk dashboard                     |
-| GET      | `/telemetry`                   | Public live regional risk board                       |
-| GET      | `/register` / POST             | Create citizen account                                |
-| GET      | `/login` / POST                | Authenticate                                          |
-| GET      | `/logout`                      | Clear session                                         |
-| GET/POST | `/subscribe`                   | Configure alert channels & manage trial               |
-| GET      | `/unsubscribe`                 | Email opt-out                                         |
-| GET/POST | `/unsubscribe/reason`          | Collect unsubscribe feedback                          |
-| GET      | `/api/v1/health`               | System health check                                   |
-| GET      | `/api/v1/risk-status?county=X` | Live composite risk for a county                      |
-| GET      | `/api/v1/alerts/history`       | Latest risk record per covered county                 |
-| POST     | `/api/v1/mpesa/callback`       | Safaricom Daraja payment webhook                      |
-| POST     | `/api/v1/sms/callback`         | Africa's Talking inbound SMS webhook (STOP / reasons) |
-| GET      | `/api/v1/check-trial-expiry`   | Cron-friendly trial expiration sweeper                |
+| Method   | Endpoint                       | Description                                                                                   |
+| -------- | ------------------------------ | --------------------------------------------------------------------------------------------- |
+| GET      | `/`                            | Public landing page                                                                           |
+| GET      | `/dashboard`                   | Authenticated user risk dashboard                                                             |
+| GET      | `/telemetry`                   | Public live regional risk board                                                               |
+| GET      | `/register` / POST             | Create citizen account                                                                        |
+| GET      | `/login` / POST                | Authenticate                                                                                  |
+| GET      | `/logout`                      | Clear session                                                                                 |
+| GET/POST | `/subscribe`                   | Configure alert channels & manage trial                                                       |
+| GET      | `/unsubscribe`                 | Email opt-out                                                                                 |
+| GET/POST | `/unsubscribe/reason`          | Collect unsubscribe feedback                                                                  |
+| GET      | `/api/v1/health`               | System health check                                                                           |
+| GET      | `/api/v1/risk-status?county=X` | Live composite risk for a county                                                              |
+| GET      | `/api/v1/alerts/history`       | Latest risk record per covered county                                                         |
+| GET      | `/api/v1/live-summary`         | Public live risk signals for the landing card (drought %, disease %, hidden pattern, status)  |
+| GET      | `/api/v1/telemetry/refresh`    | Public refresh — recomputes risk for all counties (no login) and returns fresh board/averages |
+| POST     | `/api/v1/mpesa/callback`       | Safaricom Daraja payment webhook                                                              |
+| POST     | `/api/v1/sms/callback`         | Africa's Talking inbound SMS webhook (STOP / reasons)                                         |
+| GET      | `/api/v1/check-trial-expiry`   | Cron-friendly trial expiration sweeper                                                        |
+| GET      | `/admin`                       | Admin workspace overview (admin-only)                                                         |
+| GET      | `/admin/reports`               | Admin PDF report generation hub (admin-only)                                                  |
+| GET      | `/admin/analytics`             | Admin system analytics & risk analysis (admin-only)                                           |
+| GET      | `/admin/reports/<type>/pdf`    | Download a specific PDF report (admin-only)                                                   |
+
+---
+
+## 🛡️ Admin Workspace
+
+AthGad AI includes a role-based **Admin Workspace** for authorized administrators. It provides printable PDF reports and system analytics, all gated behind admin authentication & authorization.
+
+### Promoting an Admin
+
+1. Register / create the user account as normal (or use an existing account).
+2. Run the promotion CLI:
+
+   ```bash
+   python create_admin.py admin@example.com
+   ```
+
+3. The user's role is set to `admin` in the database. On their next login they are redirected to `/admin`.
+
+### Access Control
+
+- The `role` column (`'citizen'` or `'admin'`) on the `users` table determines access.
+- Every admin route is wrapped with the `@admin_required` decorator, which:
+  - Redirects unauthenticated visitors to `/login`.
+  - Denies non-admin users and writes an `admin_access_denied` audit-log entry.
+- Admin status is stored in the session (`session['user_role']`) at login and enforced server-side on every request.
+- The **Admin Workspace** link is only shown to admins in the dashboard header.
+
+### PDF Reports
+
+Reports are generated live with **ReportLab** (`services/pdf_report_service.py`) and reflect the current system state at download time:
+
+| Report                                            | Contents                                                                                                                                              |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Predicted Calamities** (`predicted_calamities`) | Predicted calamity for all 8 counties, dynamic mitigation actions per county, risk level/score, and the date & time each prediction was produced.     |
+| **Disease Outbreaks** (`disease_outbreaks`)       | Predicted disease outbreaks (e.g. Malaria, Cholera) per county with reported cases and recommended preventive measures.                               |
+| **Subscribed Members** (`subscribed_members`)     | Currently subscribed members with their names and subscription date & time.                                                                           |
+| **Unsubscribed Members** (`unsubscribed_members`) | Unsubscribed members with their reasons for unsubscription (channel + reason) and the subscription period expressed in days, weeks, months, or years. |
+
+All PDF downloads are recorded in the audit log.
+
+### System Analytics
+
+The `/admin/analytics` page shows how the system is performing:
+
+- Total / subscribed / unsubscribed user counts and admin count.
+- Risk-alert volume.
+- Risk-level distribution (Low / Medium / High) across the covered counties.
+- Predicted risk scores per county (chart + table).
+- The county with the highest predicted risk.
 
 ---
 
@@ -261,12 +320,14 @@ python core/analytics.py
 ## 📁 Project Structure
 
 ```
-earthguard-ai/
+AthGad-ai/
 ├── app.py                          # Flask application & all routes
+├── create_admin.py                 # CLI tool to promote a user to admin
 ├── requirements.txt                # Python dependencies
 ├── config/
 │   └── .env                        # Environment secrets (git-ignored)
 ├── core/
+│   ├── admin_reports.py            # Admin analytics & report data queries
 │   ├── analytics.py                # Isolation Forest + risk fusion engine
 │   ├── county_registry.py          # Hazard blueprints & local advisories
 │   ├── db_helper.py                # SQLAlchemy engine factory
@@ -277,6 +338,7 @@ earthguard-ai/
 │   ├── climate_ingestion.py        # Open-Meteo climate fetcher
 │   ├── health_ingestion.py         # Weekly health surveillance generator
 │   ├── mpesa_service.py            # Safaricom Daraja STK Push
+│   ├── pdf_report_service.py       # ReportLab PDF report generator
 │   └── space_weather_ingestion.py  # NOAA Kp-index fetcher
 ├── static/
 │   └── js/
@@ -289,7 +351,11 @@ earthguard-ai/
 │   ├── register.html               # Registration form
 │   ├── subscribe.html              # Subscription & payment page
 │   ├── telemetry.html              # Public live risk board
-│   └── unsubscribe_reason.html     # Opt-out feedback form
+│   ├── unsubscribe_reason.html     # Opt-out feedback form
+│   └── admin/
+│       ├── dashboard.html          # Admin workspace overview
+│       ├── reports.html            # PDF report hub
+│       └── analytics.html          # System analytics & charts
 └── TODO.md                         # Refactor tracker & improvement ideas
 ```
 
@@ -303,22 +369,35 @@ earthguard-ai/
 - **Secrets Management:** API keys and DB credentials live in `config/.env`, excluded by `.gitignore`.
 - **Webhook Verification:** Payment status is only mutated server-side via the authenticated Daraja callback flow.
 - **Phone Normalization:** Inbound SMS phone numbers are normalized before lookup to prevent spoofing mismatches.
+- **Restricted CORS:** Cross-origin API access is now limited to an explicit whitelist (`CORS_ALLOWED_ORIGINS`) instead of the previous global `CORS(app)` allow-all.
+- **TLS Verification:** Outbound SMS requests now verify TLS certificates by default (`SSL_VERIFY=true`); `verify=False` is no longer hardcoded. Disable only for a trusted proxy termination scenario.
 
-> ⚠️ **Development caveats:** `CORS(app)` is enabled globally and some HTTP clients use `verify=False` for sandbox SSL — review these before production deployment.
+> ✅ **Production hardening complete.** The previous `CORS(app)` global allow-all and hardcoded `verify=False` have been removed. Configure `CORS_ALLOWED_ORIGINS` and `SSL_VERIFY` in `config/.env` for your deployment.
 
 ---
 
 ## 📈 Roadmap / Improvement Ideas
 
+Completed:
+
+- ✅ Replace random fallback baselines with deterministic per-county seasonal baselines.
+- ✅ Added adaptive seasonal weight tuning + time-series (trend/exp-smoothing) forecasting.
+- ✅ Added per-county Isolation Forest contamination tuning (configurable via env).
+- ✅ Added pluggable health-data provider: deterministic synthetic **or** real Ministry-of-Health feed.
+- ✅ Hardened CORS (whitelist) and TLS verification (`SSL_VERIFY`).
+- ✅ Made the landing "Live Risk Signals" card dynamic with processed telemetry data (`/api/v1/live-summary`).
+- ✅ Added a public telemetry Refresh button backed by `/api/v1/telemetry/refresh` (no login required).
+- ✅ Removed underlines from all links/buttons and compacted the landing header for a cleaner UI.
+
+Remaining:
+
 1. Centralize all user-facing copy into a single localization module (EN/SW).
-2. Replace synthetic fallback baselines with seeded historical data.
-3. Add dynamic weight tuning and time-series (LSTM/Prophet) forecasting.
-4. Compile Tailwind CSS instead of using the CDN for rural low-bandwidth performance.
-5. Add accessibility and contrast audits across all pages.
-6. Introduce rate-limiting and stricter CORS policies in production.
+2. Compile Tailwind CSS instead of using the CDN for rural low-bandwidth performance.
+3. Add accessibility and contrast audits across all pages.
+4. Introduce rate-limiting and API-key auth for internal endpoints in production.
 
 ---
 
 ## 📄 License
 
-Proprietary / All Rights Reserved — EarthGuard AI. For demonstration and evaluation purposes.
+Proprietary / All Rights Reserved — AthGad AI. For demonstration and evaluation purposes.

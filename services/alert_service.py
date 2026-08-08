@@ -10,18 +10,27 @@ from dotenv import load_dotenv
 from sqlalchemy import text
 from requests.adapters import HTTPAdapter, Retry
 
-# Suppress SSL warnings for sandbox/dev environments (verify=False usage)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# Suppress SSL warnings only when SSL_VERIFY is explicitly disabled. When SSL
+# verification is enabled (default), warnings are not suppressed.
+load_dotenv(dotenv_path=os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', '.env')
+)
 
-# Load environment configuration parameters with robust path resolution
-dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', '.env')
-load_dotenv(dotenv_path)
+_SSL_VERIFY = os.getenv("SSL_VERIFY", "true").lower() in ("1", "true", "yes", "on")
+if not _SSL_VERIFY:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-class EarthGuardAlertService:
+class AthGadAlertService:
     def __init__(self, db_engine=None):
         # Database Engine Context Binding
         self.engine = db_engine
+
+        # SSL verification for outbound SMS requests. Defaults to TRUE (secure).
+        # Set SSL_VERIFY=false in production ONLY if behind a proxy that
+        # terminates TLS with a private cert you explicitly trust. This removes
+        # the previous hardcoded verify=False (MITM risk).
+        self.ssl_verify = _SSL_VERIFY
 
         # Africa's Talking SMS Configuration (REST API)
         self.at_username = os.getenv("AT_USERNAME")
@@ -40,10 +49,15 @@ class EarthGuardAlertService:
             print(f"✅ Africa's Talking REST API configured (mode: {'sandbox' if self.at_is_sandbox else 'production'}, username: {self.at_username})")
 
         # SMTP Email Outbound Credentials
-        self.sender_email = os.getenv("GMAIL_SENDER", os.getenv("ALERT_SENDER_EMAIL", "alerts@earthguard.ai"))
+        self.sender_email = os.getenv("GMAIL_SENDER", os.getenv("ALERT_SENDER_EMAIL", "alerts@AthGad.ai"))
         self.smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
         self.smtp_port = int(os.getenv("SMTP_PORT", 587))
         self.smtp_password = os.getenv("GMAIL_APP_PASSWORD", os.getenv("SMTP_PASSWORD", ""))
+
+        # Public base URL used in generated links (emails / web pages). Defaults
+        # to localhost for local development; set APP_BASE_URL in production so
+        # recipients receive real, working links instead of hardcoded 127.0.0.1.
+        self.base_url = os.getenv("APP_BASE_URL", "http://127.0.0.1:5000").rstrip("/")
 
     # ------------------------------------------------------------------
     # TIERED RISK ALERT DISPATCH
@@ -79,19 +93,32 @@ class EarthGuardAlertService:
             return False
 
         try:
-            # Fetch user vectors including payment verification status and trial expiration flags
+            # Fetch user vectors including payment status, trial expiration flags,
+            # and the county they are interested in (for per-county targeting).
+            # Users with a NULL/empty county still receive all alerts (backward
+            # compatible), while users with a county set only receive alerts for
+            # that specific county.
             with self.engine.connect() as connection:
-                subscribers = connection.execute(text("""
+                rows = connection.execute(text("""
                     SELECT full_name, email, phone_number, is_subscribed,
-                           subscribe_sms, subscribe_email, payment_status, trial_ends_at
+                           subscribe_sms, subscribe_email, payment_status,
+                           trial_ends_at, county
                     FROM users;
                 """)).fetchall()
 
+            # Per-county targeting: include a user if they have no specific
+            # county (legacy behaviour) OR if their county matches the alert.
+            subscribers = [
+                r for r in rows
+                if not (getattr(r, 'county', None) or '').strip()
+                or (getattr(r, 'county', None) or '').strip().lower() == county.lower()
+            ]
+
             if not subscribers:
-                print(f"Alert Engine Notice: No registered users found in database index.")
+                print(f"Alert Engine Notice: No matching users found in database index for {county} County.")
                 return True
 
-            print(f"Alert Engine: Broadcasting verified channel-aware alerts for {len(subscribers)} user profiles...")
+            print(f"Alert Engine: Broadcasting verified channel-aware alerts for {len(subscribers)} user profiles (target: {county} County)...")
 
             now = datetime.now()
 
@@ -126,13 +153,17 @@ class EarthGuardAlertService:
                 sms_is_premium = account_is_premium and opt_sms
                 email_is_premium = account_is_premium and opt_email
 
-                # Channel 1: SMS Delivery Pipeline (Africa's Talking)
-                self._send_at_sms(sub.phone_number, sub.full_name, county, level, calamity,
-                                  is_premium=sms_is_premium, risk_advisory=risk_advisory)
+                # Only dispatch on channels the user explicitly opted into. This
+                # prevents spammy alerts to users who never enabled SMS/email.
+                if opt_sms:
+                    # Channel 1: SMS Delivery Pipeline (Africa's Talking)
+                    self._send_at_sms(sub.phone_number, sub.full_name, county, level, calamity,
+                                      is_premium=sms_is_premium, risk_advisory=risk_advisory)
 
-                # Channel 2: EMAIL Delivery Pipeline
-                self._send_smtp_email(sub.email, sub.full_name, county, level, score, calamity, metrics,
-                                      is_premium=email_is_premium, risk_advisory=risk_advisory)
+                if opt_email:
+                    # Channel 2: EMAIL Delivery Pipeline
+                    self._send_smtp_email(sub.email, sub.full_name, county, level, score, calamity, metrics,
+                                          is_premium=email_is_premium, risk_advisory=risk_advisory)
 
             return True
 
@@ -173,7 +204,7 @@ class EarthGuardAlertService:
                 cascading_text = "; ".join(cascading_list[:3]) if cascading_list else "Monitor local advisories."
                 proactive_text = "; ".join(proactive_list[:2]) if proactive_list else "Stay safe and follow local guidance."
                 message_body = (
-                    f"EarthGuard AI: Hello {name}! {county} County is at {level.upper()} RISK. "
+                    f"AthGad AI: Hello {name}! {county} County is at {level.upper()} RISK. "
                     f"Threat: {calamity}. "
                     f"Possible impacts: {cascading_text} "
                     f"What to do: {proactive_text} "
@@ -181,10 +212,10 @@ class EarthGuardAlertService:
                 )
             else:
                 message_body = (
-                    f"EarthGuard AI: Safety alert for {county} County. "
+                    f"AthGad AI: Safety alert for {county} County. "
                     f"The risk level is {level.upper()}. "
                     f"More details are available with a paid subscription. "
-                    f"Sign up at earthguard.ai/subscribe to get full alerts and safety advice."
+                    f"Sign up at AthGad.ai/subscribe to get full alerts and safety advice."
                 )
 
             headers = {
@@ -213,14 +244,14 @@ class EarthGuardAlertService:
             adapter = HTTPAdapter(max_retries=retry_strategy)
             session.mount("https://", adapter)
             session.mount("http://", adapter)
-            headers["User-Agent"] = "EarthGuardAI/1.0"
+            headers["User-Agent"] = "AthGadAI/1.0"
 
             response = session.post(
                 url,
                 headers=headers,
                 data=payload,
                 timeout=30,
-                verify=False,
+                verify=self.ssl_verify,
                 proxies={"http": None, "https": None}
             )
 
@@ -269,7 +300,7 @@ class EarthGuardAlertService:
         proactive_list = risk_advisory.get("proactive_solutions", []) or []
 
         if is_premium:
-            subject = f"EarthGuard Alert: {level} Risk in {county} County"
+            subject = f"AthGad Alert: {level} Risk in {county} County"
             headline = "Important Safety Advisory"
             description = f"Hello {name}, our monitoring system has detected rising risk in your area. Here is what you need to know and how to stay safe."
 
@@ -312,13 +343,13 @@ class EarthGuardAlertService:
             action_color = "#34d399"
 
             footer_links_html = f"""
-                <a href="https://earthguard.ai/dashboard" style="color: #38bdf8; text-decoration: none;">Command Interface</a> |
-                <a href="http://127.0.0.1:5000/unsubscribe?email={recipient_email}" style="color: #ef4444; text-decoration: none;">Unsubscribe from Premium</a>
+                <a href="https://AthGad.ai/dashboard" style="color: #38bdf8; text-decoration: none;">Command Interface</a> |
+                <a href="{self.base_url}/unsubscribe?email={recipient_email}" style="color: #ef4444; text-decoration: none;">Unsubscribe from Premium</a>
             """
         else:
-            subject = f"EarthGuard Baseline Advisory: Safety Anomaly detected in {county} County"
+            subject = f"AthGad Baseline Advisory: Safety Anomaly detected in {county} County"
             headline = "Baseline Environmental Safety Warning"
-            description = f"Hello {name}, EarthGuard sensors have flagged an operational climate anomaly in {county} County reaching a <strong>{level.upper()}</strong> alert state."
+            description = f"Hello {name}, AthGad sensors have flagged an operational climate anomaly in {county} County reaching a <strong>{level.upper()}</strong> alert state."
 
             metrics_html = f"""
                 <tr style="background-color: #020617;">
@@ -334,12 +365,12 @@ class EarthGuardAlertService:
             cascading_html = ""
             proactive_html = ""
 
-            action_button = "Unlock Real-Time Pipelines: Visit earthguard.ai/upgrade to activate full tracking capabilities."
+            action_button = "Unlock Real-Time Pipelines: Visit AthGad.ai/upgrade to activate full tracking capabilities."
             action_color = "#38bdf8"
 
             footer_links_html = f"""
-                <a href="http://127.0.0.1:5000/dashboard" style="color: #38bdf8; text-decoration: none;">Command Interface</a> |
-                <a href="http://127.0.0.1:5000/subscribe" style="color: #10b981; font-weight: bold; text-decoration: none;">Upgrade to Premium</a>
+                <a href="{self.base_url}/dashboard" style="color: #38bdf8; text-decoration: none;">Command Interface</a> |
+                <a href="{self.base_url}/subscribe" style="color: #10b981; font-weight: bold; text-decoration: none;">Upgrade to Premium</a>
             """
 
         body_html = f"""
@@ -348,7 +379,7 @@ class EarthGuardAlertService:
             <div style="max-width: 600px; margin: 0 auto; background-color: #0f172a; border: 1px solid #1e293b; padding: 24px; border-radius: 12px;">
                 <div style="margin-bottom: 20px;">
                     <span style="height: 10px; width: 10px; background-color: #10b981; display: inline-block; border-radius: 50%; margin-right: 6px;"></span>
-                    <strong style="text-transform: uppercase; letter-spacing: 0.05em; font-size: 16px; color: #ffffff;">EarthGuard AI System</strong>
+                    <strong style="text-transform: uppercase; letter-spacing: 0.05em; font-size: 16px; color: #ffffff;">AthGad AI System</strong>
                 </div>
 
                 <h2 style="color: #ef4444; font-size: 20px; border-bottom: 1px solid #1e293b; padding-bottom: 12px; margin-top: 0;">
@@ -371,7 +402,7 @@ class EarthGuardAlertService:
                 </p>
 
                 <p style="font-size: 11px; color: #64748b; text-align: center; margin-top: 30px; border-top: 1px solid #1e293b; padding-top: 16px;">
-                    Sent by EarthGuard AI System. <br><br>
+                    Sent by AthGad AI System. <br><br>
                     {footer_links_html}
                 </p>
             </div>
@@ -410,24 +441,24 @@ class EarthGuardAlertService:
         """Notifies the user that their 30-day free trial has started."""
         if opt_sms and phone_number:
             msg = (
-                f"EarthGuard AI: Welcome {name}! Your 30-day free trial has started. "
+                f"AthGad AI: Welcome {name}! Your 30-day free trial has started. "
                 f"You will receive full premium alerts until {trial_end_date}. "
                 f"After that, a fee of 150 KES/month via M-PESA applies. "
-                f"Visit earthguard.ai/subscribe to manage your subscription. Reply STOP to opt out."
+                f"Visit AthGad.ai/subscribe to manage your subscription. Reply STOP to opt out."
             )
             self._send_sms_raw(phone_number, msg)
 
         if opt_email and email:
-            subject = "EarthGuard AI: Your 30-Day Free Trial Has Started"
+            subject = "AthGad AI: Your 30-Day Free Trial Has Started"
             body_html = f"""
             <html>
             <body style="font-family: sans-serif; background-color: #020617; color: #f8fafc; padding: 20px;">
                 <div style="max-width: 500px; margin: 0 auto; background-color: #0f172a; border: 1px solid #1e293b; padding: 24px; border-radius: 12px;">
-                    <h2 style="color: #10b981;">Welcome to EarthGuard Premium, {name}!</h2>
+                    <h2 style="color: #10b981;">Welcome to AthGad Premium, {name}!</h2>
                     <p style="color: #94a3b8;">Your 30-day free trial is now active.</p>
                     <p style="color: #94a3b8;">You will receive full premium alerts until <strong>{trial_end_date}</strong>.</p>
                     <p style="color: #eab308;">After the trial, a fee of <strong>150 KES/month</strong> via M-PESA will apply to continue receiving premium alerts.</p>
-                    <p style="color: #94a3b8;">Manage your subscription at <a href="http://127.0.0.1:5000/subscribe" style="color: #38bdf8;">earthguard.ai/subscribe</a>.</p>
+                    <p style="color: #94a3b8;">Manage your subscription at <a href="http://127.0.0.1:5000/subscribe" style="color: #38bdf8;">AthGad.ai/subscribe</a>.</p>
                 </div>
             </body>
             </html>
@@ -439,15 +470,15 @@ class EarthGuardAlertService:
         """Notifies the user that their trial has ended and they have been unsubscribed."""
         if opt_sms and phone_number:
             msg = (
-                f"EarthGuard AI: Hello {name}, your 30-day free trial has ended. "
+                f"AthGad AI: Hello {name}, your 30-day free trial has ended. "
                 f"You have been unsubscribed from premium alerts. "
-                f"Visit earthguard.ai/subscribe to re-subscribe and pay 150 KES/month via M-PESA. "
+                f"Visit AthGad.ai/subscribe to re-subscribe and pay 150 KES/month via M-PESA. "
                 f"Reply STOP to opt out."
             )
             self._send_sms_raw(phone_number, msg)
 
         if opt_email and email:
-            subject = "EarthGuard AI: Your Free Trial Has Ended"
+            subject = "AthGad AI: Your Free Trial Has Ended"
             body_html = f"""
             <html>
             <body style="font-family: sans-serif; background-color: #020617; color: #f8fafc; padding: 20px;">
@@ -468,7 +499,7 @@ class EarthGuardAlertService:
         next_payment = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
         if opt_sms and phone_number:
             msg = (
-                f"EarthGuard AI: Thank you {name} for your payment of 150 KES! "
+                f"AthGad AI: Thank you {name} for your payment of 150 KES! "
                 f"Your premium subscription is now active. "
                 f"Your next payment of 150 KES will be due on {next_payment}. "
                 f"Reply STOP to opt out."
@@ -476,7 +507,7 @@ class EarthGuardAlertService:
             self._send_sms_raw(phone_number, msg)
 
         if opt_email and email:
-            subject = "EarthGuard AI: Payment Successful - Thank You!"
+            subject = "AthGad AI: Payment Successful - Thank You!"
             body_html = f"""
             <html>
             <body style="font-family: sans-serif; background-color: #020617; color: #f8fafc; padding: 20px;">
@@ -485,7 +516,7 @@ class EarthGuardAlertService:
                     <p style="color: #94a3b8;">Thank you for your payment of <strong>150 KES</strong>.</p>
                     <p style="color: #94a3b8;">Your premium subscription is now active.</p>
                     <p style="color: #eab308;">Your next payment of <strong>150 KES</strong> will be due on <strong>{next_payment}</strong>.</p>
-                    <p style="color: #94a3b8;">Manage your subscription at <a href="http://127.0.0.1:5000/subscribe" style="color: #38bdf8;">earthguard.ai/subscribe</a>.</p>
+                    <p style="color: #94a3b8;">Manage your subscription at <a href="http://127.0.0.1:5000/subscribe" style="color: #38bdf8;">AthGad.ai/subscribe</a>.</p>
                 </div>
             </body>
             </html>
@@ -497,7 +528,7 @@ class EarthGuardAlertService:
         """Sends a polite confirmation requesting a reason for unsubscription."""
         if channel == "sms" and opt_sms and phone_number:
             msg = (
-                f"EarthGuard AI: Hello {name}, you have been unsubscribed from SMS alerts. "
+                f"AthGad AI: Hello {name}, you have been unsubscribed from SMS alerts. "
                 f"We're sorry to see you go. If you're willing, please tell us why: "
                 f"Reply 1 for 'Too many messages', 2 for 'Not useful', 3 for 'Too expensive', "
                 f"or type your own reason. We value your feedback!"
@@ -505,7 +536,7 @@ class EarthGuardAlertService:
             self._send_sms_raw(phone_number, msg)
 
         if channel == "email" and opt_email and email:
-            subject = "EarthGuard AI: You Have Been Unsubscribed"
+            subject = "AthGad AI: You Have Been Unsubscribed"
             body_html = f"""
             <html>
             <body style="font-family: sans-serif; background-color: #020617; color: #f8fafc; padding: 20px;">
@@ -514,12 +545,12 @@ class EarthGuardAlertService:
                     <p style="color: #94a3b8;">You have been unsubscribed from email alerts.</p>
                     <p style="color: #94a3b8;">We're sorry to see you go. If you're willing, please tell us why by visiting the link below:</p>
                     <p style="text-align: center;">
-                        <a href="http://127.0.0.1:5000/unsubscribe/reason?email={email}" 
+                        <a href="http://127.0.0.1:5000/unsubscribe/reason?email={email}"
                            style="display: inline-block; background-color: #1e293b; color: #f8fafc; padding: 10px 20px; border-radius: 8px; text-decoration: none;">
                            Share Your Feedback
                         </a>
                     </p>
-                    <p style="color: #64748b; font-size: 12px;">If you change your mind, you can re-subscribe at <a href="http://127.0.0.1:5000/subscribe" style="color: #38bdf8;">earthguard.ai/subscribe</a>.</p>
+                    <p style="color: #64748b; font-size: 12px;">If you change your mind, you can re-subscribe at <a href="http://127.0.0.1:5000/subscribe" style="color: #38bdf8;">AthGad.ai/subscribe</a>.</p>
                 </div>
             </body>
             </html>
@@ -566,9 +597,9 @@ class EarthGuardAlertService:
             adapter = HTTPAdapter(max_retries=retry_strategy)
             session.mount("https://", adapter)
             session.mount("http://", adapter)
-            headers["User-Agent"] = "EarthGuardAI/1.0"
+            headers["User-Agent"] = "AthGadAI/1.0"
 
-            response = session.post(url, headers=headers, data=payload, timeout=15, verify=False, proxies={"http": None, "https": None})
+            response = session.post(url, headers=headers, data=payload, timeout=15, verify=self.ssl_verify, proxies={"http": None, "https": None})
             if response.status_code in [200, 201]:
                 print(f"✅ SMS raw sent to {phone_number}")
                 return True

@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>System Analytics - Admin Workspace</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body class="bg-slate-950 text-slate-100 min-h-screen">
+    <!-- Admin Header -->
+    <header
+      class="border-b border-slate-800 bg-slate-950 sticky top-0 z-50 px-6 py-4"
+    >
+      <div class="max-w-7xl mx-auto flex justify-between items-center">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 flex-shrink-0 flex items-center justify-center">
+            {% include '_logo.html' %}
+          </div>
+          <div>
+            <h1
+              class="text-lg font-black tracking-wider text-emerald-400 uppercase leading-tight"
+            >
+              Admin Workspace
+            </h1>
+            <p class="text-[10px] text-slate-400">
+              AthGad AI • System Analytics
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-slate-400">
+            Welcome, <strong class="text-emerald-400">{{ admin_name }}</strong>
+          </span>
+          <a
+            href="/dashboard"
+            class="border border-slate-700 hover:bg-slate-900 text-slate-300 px-3 py-1.5 rounded-lg text-xs transition no-underline"
+            >Citizen Dashboard</a
+          >
+          <a
+            href="/logout"
+            class="border border-slate-700 hover:border-rose-500 text-slate-400 hover:text-rose-400 px-3 py-1.5 rounded-lg text-xs transition no-underline"
+            >Sign Out</a
+          >
+        </div>
+      </div>
+    </header>
+
+    <!-- Welcome / Flash Messages (fades out after 3 seconds) -->
+    <div class="max-w-7xl mx-auto px-6 pt-5">
+      <div
+        class="flash-message p-4 rounded-lg bg-emerald-950/40 border border-emerald-800 text-emerald-200 text-xs font-medium"
+      >
+        Welcome back, <strong>{{ admin_name }}</strong> — here's how the AthGad
+        AI system is performing.
+      </div>
+    </div>
+
+    <!-- Admin Nav Tabs -->
+    <nav class="max-w-7xl mx-auto px-6 pt-6 flex gap-3">
+      <a
+        href="/admin"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Overview</a
+      >
+      <a
+        href="/admin/reports"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >PDF Reports</a
+      >
+      <a
+        href="/admin/analytics"
+        class="bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >System Analytics</a
+      >
+      <a
+        href="/admin/users"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Users</a
+      >
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 py-12 space-y-12">
+      <!-- Hero -->
+      <div
+        class="bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-10 flex flex-col items-center justify-center text-center"
+      >
+        <h2 class="text-2xl font-black text-white">
+          System Performance &amp; Risk Analysis
+        </h2>
+        <p class="text-slate-400 text-sm mt-2 max-w-2xl">
+          Analyze how the AthGad AI system is working and the predicted risks
+          across all covered Eastern Kenya counties.
+        </p>
+        <span class="text-xs text-slate-400 mt-3"
+          >Last generated:
+          <span id="generated-at">{{ analytics.generated_at }}</span></span
+        >
+      </div>
+
+      <!-- KPI Row -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-7">
+          <h3
+            class="text-xs text-slate-400 font-semibold uppercase tracking-wider"
+          >
+            Total Users
+          </h3>
+          <p class="text-3xl font-black text-white mt-3">
+            {{ analytics.total_users }}
+          </p>
+        </div>
+        <div class="bg-slate-900 border border-emerald-800/60 rounded-2xl p-7">
+          <h3
+            class="text-xs text-emerald-400/70 font-semibold uppercase tracking-wider"
+          >
+            Subscribed
+          </h3>
+          <p class="text-3xl font-black text-emerald-400 mt-3">
+            {{ analytics.subscribed_count }}
+          </p>
+        </div>
+        <div class="bg-slate-900 border border-rose-800/60 rounded-2xl p-7">
+          <h3
+            class="text-xs text-rose-400/70 font-semibold uppercase tracking-wider"
+          >
+            Unsubscribed
+          </h3>
+          <p class="text-3xl font-black text-rose-400 mt-3">
+            {{ analytics.unsubscribed_count }}
+          </p>
+        </div>
+        <div class="bg-slate-900 border border-amber-800/50 rounded-2xl p-7">
+          <h3
+            class="text-xs text-amber-400/70 font-semibold uppercase tracking-wider"
+          >
+            Risk Alerts Logged
+          </h3>
+          <p class="text-3xl font-black text-amber-400 mt-3">
+            {{ analytics.alert_count }}
+          </p>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Risk distribution pie -->
+        <div class="bg-slate-950 border border-slate-800 rounded-2xl p-8">
+          <div class="flex items-center justify-between mb-6">
+            <h3
+              class="text-emerald-400 text-xs font-bold uppercase tracking-wider"
+            >
+              Risk Level Distribution
+            </h3>
+            <span class="text-[10px] text-slate-500"
+              >{{ analytics.status_board | length }} counties</span
+            >
+          </div>
+          <div class="h-72">
+            <canvas
+              id="riskPieChart"
+              data-risk-dist="{{ analytics.risk_distribution | tojson }}"
+              data-risk-pct="{{ analytics.risk_distribution_pct | tojson }}"
+            ></canvas>
+          </div>
+          <!-- Dynamic summary panel -->
+          <div class="mt-6 pt-5 border-t border-slate-800 space-y-3">
+            <div class="flex items-center justify-between text-sm">
+              <span
+                class="text-emerald-400 font-semibold flex items-center gap-2"
+              >
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                Low Risk
+              </span>
+              <span class="text-white font-bold"
+                ><span id="dist-low">{{ analytics.risk_distribution.Low }}</span
+                ><span class="text-slate-500 text-xs">
+                  (<span id="dist-low-pct"
+                    >{{ analytics.risk_distribution_pct.Low }}</span
+                  >%)</span
+                ></span
+              >
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span
+                class="text-amber-400 font-semibold flex items-center gap-2"
+              >
+                <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                Medium Risk
+              </span>
+              <span class="text-white font-bold"
+                ><span id="dist-med"
+                  >{{ analytics.risk_distribution.Medium }}</span
+                ><span class="text-slate-500 text-xs">
+                  (<span id="dist-med-pct"
+                    >{{ analytics.risk_distribution_pct.Medium }}</span
+                  >%)</span
+                ></span
+              >
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-rose-400 font-semibold flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> High
+                Risk
+              </span>
+              <span class="text-white font-bold"
+                ><span id="dist-high"
+                  >{{ analytics.risk_distribution.High }}</span
+                ><span class="text-slate-500 text-xs">
+                  (<span id="dist-high-pct"
+                    >{{ analytics.risk_distribution_pct.High }}</span
+                  >%)</span
+                ></span
+              >
+            </div>
+            <div
+              class="flex items-center justify-between pt-3 border-t border-slate-800/70"
+            >
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-400">Overall Risk Index</span>
+                <span class="group relative inline-flex" title="" tabindex="0">
+                  <svg
+                    class="w-3.5 h-3.5 text-slate-500 cursor-help"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <span
+                    class="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-slate-900 border border-slate-700 text-slate-300 text-[10px] leading-relaxed p-3 rounded-lg shadow-xl z-20"
+                  >
+                    The Overall Risk Index is the average composite risk score
+                    across all 8 covered counties, expressed as a percentage (0%
+                    = safe, 100% = extreme). It summarizes the regional
+                    early-warning posture at a glance.
+                  </span>
+                </span>
+              </div>
+              <span class="text-lg font-black text-white"
+                ><span id="total-risk-index"
+                  >{{ analytics.total_risk_index }}</span
+                ><span class="text-xs text-slate-500">% avg</span></span
+              >
+            </div>
+            <p class="text-[11px] text-slate-500 leading-relaxed">
+              Highest risk county:
+              <strong class="text-rose-400"
+                ><span id="highest-risk-county"
+                  >{{ analytics.highest_risk_county }}</span
+                ></strong
+              >
+              — <span id="high-count">{{ analytics.high_risk_count }}</span>
+              county(ies) currently at elevated alert.
+            </p>
+          </div>
+        </div>
+
+        <!-- County risk bar chart -->
+        <div class="bg-slate-950 border border-slate-800 rounded-2xl p-8">
+          <div class="flex items-center justify-between mb-6">
+            <h3
+              class="text-emerald-400 text-xs font-bold uppercase tracking-wider"
+            >
+              Predicted Risks by County
+            </h3>
+            <button
+              id="btn-refresh"
+              onclick="refreshAnalytics()"
+              class="cursor-pointer bg-slate-800 hover:bg-emerald-600 text-emerald-300 hover:text-white font-bold px-3.5 py-1.5 rounded-lg text-xs transition flex items-center gap-1.5"
+            >
+              <svg
+                class="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              Refresh
+            </button>
+          </div>
+          <div class="h-72">
+            <canvas
+              id="countyBarChart"
+              data-status-board="{{ analytics.status_board | tojson }}"
+            ></canvas>
+          </div>
+          <!-- Dynamic per-county forecast detail list -->
+          <div
+            id="trend-list"
+            class="mt-6 pt-5 border-t border-slate-800 space-y-2"
+          >
+            {% for item in analytics.status_board %}
+            <div
+              class="flex items-center justify-between text-xs py-1.5 border-b border-slate-800/40 last:border-0"
+            >
+              <span class="text-slate-300 font-semibold"
+                >{{ item.county }}</span
+              >
+              <span class="flex items-center gap-2">
+                <span
+                  class="text-slate-500 max-w-[240px] truncate hidden md:inline"
+                  >{{ item.primary_threat }}</span
+                >
+                <span
+                  class="px-2 py-0.5 rounded text-[10px] font-bold uppercase {% if item.trend == 'rising' %}bg-rose-500/20 text-rose-300 border border-rose-500/30 {% elif item.trend == 'falling' %}bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 {% else %}bg-amber-500/20 text-amber-300 border border-amber-500/30{% endif %}"
+                >
+                  {{ item.trend }}
+                </span>
+              </span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Risk board table -->
+      <div
+        class="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden"
+      >
+        <div class="p-6 border-b border-slate-800">
+          <h3
+            class="text-emerald-400 text-xs font-bold uppercase tracking-wider"
+          >
+            Predicted Risks — All Covered Counties
+          </h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead
+              class="bg-slate-900/80 border-b border-slate-800 text-[11px] uppercase tracking-wider text-slate-400 font-bold"
+            >
+              <tr>
+                <th class="py-3 px-6">County</th>
+                <th class="py-3 px-6">Risk Score</th>
+                <th class="py-3 px-6">Risk Level</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in analytics.status_board %}
+              <tr class="border-b border-slate-800/60">
+                <td class="py-3 px-6 font-bold text-white">
+                  {{ item.county }}
+                </td>
+                <td class="py-3 px-6 font-mono text-slate-300">
+                  {{ item.score_pct }}%
+                </td>
+                <td class="py-3 px-6">
+                  <span
+                    class="px-2 py-0.5 rounded text-[10px] font-bold uppercase {% if item.risk_level == 'High' %}bg-rose-500/20 text-rose-300 border border-rose-500/30 {% elif item.risk_level == 'Medium' %}bg-amber-500/20 text-amber-300 border border-amber-500/30 {% else %}bg-emerald-500/20 text-emerald-300 border border-emerald-500/30{% endif %}"
+                  >
+                    {{ item.risk_level }}
+                  </span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <!-- Chart.js rendering -->
+    <script>
+      // Read the JSON payloads from data-* attributes (kept out of the JS
+      // body so the HTML/JS editors don't flag the Jinja template tags).
+      const pieCanvas = document.getElementById("riskPieChart");
+      const barCanvas = document.getElementById("countyBarChart");
+      let riskDist = { Low: 0, Medium: 0, High: 0 };
+      let statusBoard = [];
+
+      if (pieCanvas && pieCanvas.dataset.riskDist) {
+        try {
+          riskDist = JSON.parse(pieCanvas.dataset.riskDist);
+        } catch (e) {
+          riskDist = { Low: 0, Medium: 0, High: 0 };
+        }
+      }
+      if (barCanvas && barCanvas.dataset.statusBoard) {
+        try {
+          statusBoard = JSON.parse(barCanvas.dataset.statusBoard);
+        } catch (e) {
+          statusBoard = [];
+        }
+      }
+
+      // Chart instances (so we can destroy/re-create on refresh).
+      let pieChartInstance = null;
+      let barChartInstance = null;
+
+      // Render (or re-render) the Risk Level Distribution doughnut chart.
+      function renderPieChart() {
+        const pieCtx = document.getElementById("riskPieChart");
+        if (!pieCtx) return;
+        if (pieChartInstance) pieChartInstance.destroy();
+        pieChartInstance = new Chart(pieCtx, {
+          type: "doughnut",
+          data: {
+            labels: ["Low", "Medium", "High"],
+            datasets: [
+              {
+                data: [riskDist.Low, riskDist.Medium, riskDist.High],
+                backgroundColor: ["#10b981", "#f59e0b", "#ef4444"],
+                borderColor: ["#064e3b", "#78350f", "#7f1d1d"],
+                borderWidth: 2,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { position: "bottom", labels: { color: "#94a3b8" } },
+            },
+          },
+        });
+      }
+
+      // Render (or re-render) the County Risk bar chart.
+      function renderBarChart() {
+        const barCtx = document.getElementById("countyBarChart");
+        if (!barCtx) return;
+        if (barChartInstance) barChartInstance.destroy();
+        const counties = statusBoard.map((c) => c.county);
+        const scores = statusBoard.map((c) => c.score_pct);
+        const colors = statusBoard.map((c) =>
+          c.risk_level === "High"
+            ? "#ef4444"
+            : c.risk_level === "Medium"
+              ? "#f59e0b"
+              : "#10b981",
+        );
+        barChartInstance = new Chart(barCtx, {
+          type: "bar",
+          data: {
+            labels: counties,
+            datasets: [
+              {
+                label: "Risk Score (%)",
+                data: scores,
+                backgroundColor: colors,
+                borderRadius: 6,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: "y",
+            scales: {
+              x: {
+                beginAtZero: true,
+                grid: { color: "#1e293b" },
+                ticks: { color: "#94a3b8" },
+              },
+              y: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+            },
+            plugins: { legend: { display: false } },
+          },
+        });
+      }
+
+      // Rebuild the per-county trend list from the current status board.
+      function renderTrendList() {
+        const container = document.getElementById("trend-list");
+        if (!container) return;
+        container.innerHTML = statusBoard
+          .map(function (item) {
+            var trendClass =
+              item.trend === "rising"
+                ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                : item.trend === "falling"
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                  : "bg-amber-500/20 text-amber-300 border border-amber-500/30";
+            return (
+              '<div class="flex items-center justify-between text-xs py-1.5 border-b border-slate-800/40 last:border-0">' +
+              '<span class="text-slate-300 font-semibold">' +
+              item.county +
+              "</span>" +
+              '<span class="flex items-center gap-2">' +
+              '<span class="text-slate-500 max-w-[240px] truncate hidden md:inline">' +
+              (item.primary_threat || "") +
+              "</span>" +
+              '<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase ' +
+              trendClass +
+              '">' +
+              (item.trend || "stable") +
+              "</span>" +
+              "</span></div>"
+            );
+          })
+          .join("");
+      }
+
+      // Render the initial charts.
+      renderPieChart();
+      renderBarChart();
+      renderTrendList();
+
+      // Live refresh: pull fresh telemetry and re-render all dynamic content.
+      function refreshAnalytics() {
+        var btn = document.getElementById("btn-refresh");
+        var originalHtml = btn ? btn.innerHTML : "";
+        if (btn) {
+          btn.disabled = true;
+          btn.innerHTML = "Refreshing...";
+        }
+
+        fetch("/api/v1/admin/telemetry/refresh")
+          .then(function (res) {
+            return res.json();
+          })
+          .then(function (data) {
+            if (data.status !== "ok") {
+              alert("Refresh failed. Please try again.");
+              return;
+            }
+
+            // Update the status board and recompute the risk distribution.
+            statusBoard = data.status_board || [];
+            riskDist = { Low: 0, Medium: 0, High: 0 };
+            statusBoard.forEach(function (c) {
+              riskDist[c.risk_level] = (riskDist[c.risk_level] || 0) + 1;
+            });
+            const totalDist = statusBoard.length || 1;
+            const pct = function (tier) {
+              return Math.round((riskDist[tier] / totalDist) * 1000) / 10;
+            };
+
+            // Re-render charts + trend list.
+            renderPieChart();
+            renderBarChart();
+            renderTrendList();
+
+            // Update the dynamic summary panel values (risk distribution,
+            // overall risk index, highest-risk county, high-count).
+            function setText(id, val) {
+              var el = document.getElementById(id);
+              if (el) el.textContent = val;
+            }
+            setText("dist-low", riskDist.Low || 0);
+            setText("dist-low-pct", pct("Low"));
+            setText("dist-med", riskDist.Medium || 0);
+            setText("dist-med-pct", pct("Medium"));
+            setText("dist-high", riskDist.High || 0);
+            setText("dist-high-pct", pct("High"));
+
+            // Overall risk index = average score across counties.
+            var avgScore =
+              statusBoard.length > 0
+                ? Math.round(
+                    (statusBoard.reduce(function (s, c) {
+                      return s + (parseFloat(c.score_pct) || 0);
+                    }, 0) /
+                      statusBoard.length) *
+                      10,
+                  ) / 10
+                : 0;
+            setText("total-risk-index", avgScore);
+
+            // Highest-risk county + high county count.
+            var highCounty = "—";
+            var highScore = -1;
+            var highCount = 0;
+            statusBoard.forEach(function (c) {
+              if ((parseFloat(c.score_pct) || 0) > highScore) {
+                highScore = parseFloat(c.score_pct) || 0;
+                highCounty = c.county;
+              }
+              if (c.risk_level === "High") highCount += 1;
+            });
+            setText("highest-risk-county", highCounty);
+            setText("high-count", highCount);
+
+            // Update the "Last generated" label.
+            var genEl = document.getElementById("generated-at");
+            if (genEl) genEl.textContent = data.last_sync;
+          })
+          .catch(function () {
+            alert("Could not refresh analytics data. Please try again.");
+          })
+          .finally(function () {
+            if (btn) {
+              btn.disabled = false;
+              btn.innerHTML = originalHtml;
+            }
+          });
+      }
+
+      // Fade out the welcome / flash message after 3 seconds.
+      var flashMessages = document.querySelectorAll(".flash-message");
+      flashMessages.forEach(function (msg) {
+        setTimeout(function () {
+          msg.classList.add("fading");
+          setTimeout(function () {
+            msg.style.display = "none";
+          }, 800);
+        }, 3000);
+      });
+    </script>
+
+    <style>
+      .flash-message {
+        transition:
+          opacity 0.8s ease,
+          transform 0.8s ease;
+      }
+      .flash-message.fading {
+        opacity: 0;
+        transform: translateY(-6px);
+      }
+    </style>
+  </body>
+</html>

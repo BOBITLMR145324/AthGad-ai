@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF Reports - Admin Workspace</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body class="bg-slate-950 text-slate-100 min-h-screen">
+    <!-- Admin Header -->
+    <header
+      class="border-b border-slate-800 bg-slate-950 sticky top-0 z-50 px-6 py-4"
+    >
+      <div class="max-w-7xl mx-auto flex justify-between items-center">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 flex-shrink-0 flex items-center justify-center">
+            {% include '_logo.html' %}
+          </div>
+          <div>
+            <h1
+              class="text-lg font-black tracking-wider text-emerald-400 uppercase leading-tight"
+            >
+              Admin Workspace
+            </h1>
+            <p class="text-[10px] text-slate-400">
+              AthGad AI • Printable PDF Reports
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <a
+            href="/dashboard"
+            class="border border-slate-700 hover:bg-slate-900 text-slate-300 px-3 py-1.5 rounded-lg text-xs transition no-underline"
+            >Citizen Dashboard</a
+          >
+          <a
+            href="/logout"
+            class="border border-slate-700 hover:border-rose-500 text-slate-400 hover:text-rose-400 px-3 py-1.5 rounded-lg text-xs transition no-underline"
+            >Sign Out</a
+          >
+        </div>
+      </div>
+    </header>
+
+    <!-- Admin Nav Tabs -->
+    <nav class="max-w-7xl mx-auto px-6 pt-6 flex gap-3">
+      <a
+        href="/admin"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Overview</a
+      >
+      <a
+        href="/admin/reports"
+        class="bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >PDF Reports</a
+      >
+      <a
+        href="/admin/analytics"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >System Analytics</a
+      >
+      <a
+        href="/admin/users"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Users</a
+      >
+    </nav>
+
+    <!-- Flash Messages -->
+    <div class="max-w-7xl mx-auto px-6 pt-4">
+      {% with messages = get_flashed_messages(with_categories=true) %} {% for
+      category, message in messages %}
+      <div
+        class="p-3 rounded-lg text-xs font-medium mb-3 {% if category == 'error' %}bg-red-950/40 border border-red-800 text-red-200 {% else %}bg-emerald-950/40 border border-emerald-800 text-emerald-200{% endif %}"
+      >
+        {{ message }}
+      </div>
+      {% endfor %} {% endwith %}
+    </div>
+
+    <main class="max-w-7xl mx-auto px-6 py-8 space-y-6">
+      <!-- Page Hero -->
+      <div
+        class="bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-8"
+      >
+        <h2 class="text-2xl font-black text-white">PDF Report Generation</h2>
+        <p class="text-slate-400 text-sm mt-1">
+          Generate print-ready PDF reports generated live from the AthGad AI
+          system. Data reflects the current state at the moment of download.
+        </p>
+      </div>
+
+      <!-- Report Cards Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Report 1: Predicted Calamities -->
+        <div
+          class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4"
+        >
+          <div
+            class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-lg"
+          >
+            ⚠️
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-white">
+              Predicted Calamities &amp; Mitigation Actions
+            </h3>
+            <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+              Predicted calamities for all 8 Eastern Kenya counties, dynamic
+              mitigation actions per county, and the date/time each prediction
+              was produced by the system.
+            </p>
+          </div>
+          <a
+            href="/admin/reports/predicted_calamities/pdf"
+            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+          >
+            📄 Download PDF
+          </a>
+        </div>
+
+        <!-- Report 2: Disease Outbreaks -->
+        <div
+          class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4"
+        >
+          <div
+            class="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 text-lg"
+          >
+            🦠
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-white">
+              Disease Outbreak Predictions
+            </h3>
+            <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+              Predicted disease outbreaks for each county (e.g. Malaria,
+              Cholera) with reported cases and the recommended preventive
+              measures for every county.
+            </p>
+          </div>
+          <a
+            href="/admin/reports/disease_outbreaks/pdf"
+            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+          >
+            📄 Download PDF
+          </a>
+        </div>
+
+        <!-- Report 3: Subscribed Members -->
+        <div
+          class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4"
+        >
+          <div
+            class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-lg"
+          >
+            👥
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-white">Subscribed Members</h3>
+            <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+              All currently subscribed members showing only their names and
+              their subscription date &amp; time.
+            </p>
+          </div>
+          <a
+            href="/admin/reports/subscribed_members/pdf"
+            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+          >
+            📄 Download PDF
+          </a>
+        </div>
+
+        <!-- Report 4: Unsubscribed Members -->
+        <div
+          class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4"
+        >
+          <div
+            class="w-10 h-10 rounded-xl bg-slate-600/10 border border-slate-500/20 flex items-center justify-center text-slate-400 text-lg"
+          >
+            🚫
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-white">Unsubscribed Members</h3>
+            <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+              All unsubscribed members, their reasons for unsubscription, and
+              the subscription period displayed in days, weeks, months, or
+              years.
+            </p>
+          </div>
+          <a
+            href="/admin/reports/unsubscribed_members/pdf"
+            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+          >
+            📄 Download PDF
+          </a>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

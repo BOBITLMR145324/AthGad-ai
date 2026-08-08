@@ -11,6 +11,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', '.env')
 load_dotenv(dotenv_path)
 
+# Storage pipeline (wired lazily in __main__ to avoid a hard import-time
+# dependency and keep the ingestion services importable in any context).
+try:
+    from core.processor import AthGadDataProcessor
+except ImportError:
+    AthGadDataProcessor = None
+
+
 class ClimateIngestionService:
     def __init__(self):
         self.base_url = "https://api.open-meteo.com/v1/forecast"
@@ -49,7 +57,18 @@ class ClimateIngestionService:
             print(f"Unexpected Ingestion Error occurred: {str(e)}")
             return {}
 
+
 if __name__ == "__main__":
     service = ClimateIngestionService()
     raw_data = service.fetch_daily_climate_metrics()
     print("Sample Ingested JSON Structure looks like:\n", list(raw_data.keys()))
+
+    # Persist the fetched climate metrics to the database so the analytics
+    # engine has real data instead of always relying on baseline fallbacks.
+    if raw_data and AthGadDataProcessor is not None:
+        processor = AthGadDataProcessor()
+        processor.process_and_store_climate(raw_data)
+        print("Climate Ingestion Pipeline: data persisted to climate_records.")
+    else:
+        print("Climate Ingestion Pipeline: no data to store (or processor unavailable).")
+

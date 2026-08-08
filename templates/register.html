@@ -6,9 +6,9 @@
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>Create Your Account - EarthGuard AI</title>
+    <title>Create Your Account - AthGad AI</title>
 
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/css/style.css" />
   </head>
 
   <body
@@ -26,7 +26,7 @@
           </div>
 
           <h1 class="text-2xl font-black tracking-wider text-emerald-400">
-            EARTHGUARD AI
+            ATHGAD AI
           </h1>
         </div>
 
@@ -51,14 +51,6 @@
 
         <div
           class="flash-alert p-4 rounded-xl text-xs font-medium leading-relaxed border transition-opacity duration-500 opacity-100 {% if category == 'warning' or category == 'error' %} bg-rose-950/40 border-rose-800 text-rose-300 {% else %} bg-emerald-950/40 border-emerald-800 text-emerald-300 {% endif %}"
-          {%
-          if
-          category=""
-          ="warning"
-          %}data-persistent="true"
-          {%
-          endif
-          %}
         >
           <p class="font-bold mb-1">
             {% if category == 'warning' %}Account Found:{% elif category ==
@@ -86,6 +78,7 @@
       <!-- Registration Form -->
 
       <form action="/register" method="POST" class="space-y-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <div>
           <label
             class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
@@ -97,7 +90,7 @@
             name="full_name"
             required
             placeholder="Samuel Mutuku"
-            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
           />
         </div>
 
@@ -112,7 +105,7 @@
             name="email"
             required
             placeholder="samuel@example.com"
-            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
           />
         </div>
 
@@ -127,7 +120,7 @@
             name="phone_number"
             required
             placeholder="+254700000000"
-            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
           />
 
           <p class="text-[10px] text-slate-500 mt-1">
@@ -146,7 +139,7 @@
             name="password"
             required
             placeholder="••••••••"
-            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition"
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
           />
         </div>
 

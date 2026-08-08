@@ -3,25 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EarthGuard AI - Early Warnings for Eastern Kenya</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>AthGad AI - Early Warnings for Eastern Kenya</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
   </head>
   <body
     class="bg-slate-950 text-slate-100 font-sans antialiased min-h-screen flex flex-col justify-between"
   >
     <header
-      class="border-b border-slate-900 bg-slate-950/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex items-center justify-between"
+      class="border-b border-slate-900 bg-slate-950/80 backdrop-blur sticky top-0 z-50 px-4 py-3 flex items-center justify-between"
     >
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2.5">
         <!-- Explicit Sized Container for Logo -->
         <div class="w-8 h-8 flex-shrink-0 flex items-center justify-center">
           {% include '_logo.html' %}
         </div>
-        <span class="text-white font-black tracking-wider text-xl uppercase"
-          >EarthGuard AI</span
+        <span
+          class="text-white font-black tracking-wider text-lg uppercase leading-tight"
+          >AthGad AI</span
         >
       </div>
-      <div class="flex items-center gap-4">
+      <div class="flex items-center gap-3">
         <a
           href="/login"
           class="text-sm font-semibold text-slate-300 hover:text-white transition"
@@ -29,7 +30,7 @@
         >
         <a
           href="/register"
-          class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition shadow-md shadow-emerald-950/30"
+          class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-3.5 py-1.5 rounded-lg transition shadow-md shadow-emerald-950/30"
           >Get Started</a
         >
       </div>
@@ -52,9 +53,8 @@
             <span class="text-emerald-400">Weather & Health Risks.</span>
           </h1>
           <p class="text-slate-400 text-base leading-relaxed">
-            EarthGuard AI turns environmental data into early
-            warnings—protecting farms and communities in Eastern Kenya before
-            disasters strike.
+            AthGad AI turns environmental data into early warnings—protecting
+            farms and communities in Eastern Kenya before disasters strike.
           </p>
 
           <div class="pt-4 flex flex-wrap gap-4">
@@ -86,33 +86,54 @@
           </div>
         </div>
 
-        <div
-          class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative overflow-hidden group"
-        >
-          <div
-            class="absolute -right-16 -top-16 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl"
-          ></div>
-          <h3
-            class="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-4"
+<!-- Live Risk Signals Card (dynamic via /api/v1/live-summary) -->
+<div class="relative" style="margin-top: 3.5rem">
+          <!-- Hanging ATHGAD AI logo: bottom tip lands on the frame like a hook -->
+<div
+            class="absolute flex justify-center"
+            style="top: -4.5rem; left: 0; right: 0; z-index: 10; pointer-events: none"
           >
-            Live Risk Signals
-          </h3>
+            <div
+              class="flex-shrink-0"
+              style="
+                width: 7rem;
+                height: 7rem;
+                filter: drop-shadow(0 12px 22px rgba(16, 185, 129, 0.5));
+              "
+            >
+              {% include '_logo.html' %}
+            </div>
+          </div>
+          <div
+            class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl relative overflow-hidden group"
+            style="padding: 2.5rem 1.5rem 1.5rem"
+          >
+            <div
+              class="absolute -right-16 -top-16 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl"
+            ></div>
+            <h3
+              class="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-4 text-center"
+            >
+              Live Risk Signals
+            </h3>
           <div class="space-y-4 font-mono text-xs text-slate-400">
             <div class="flex justify-between border-b border-slate-800 pb-2">
               <span>Drought Risk:</span>
-              <span class="text-white">65% (High)</span>
+              <span class="text-white" id="risk-drought">--%</span>
             </div>
             <div class="flex justify-between border-b border-slate-800 pb-2">
               <span>Disease Outbreak Risk:</span>
-              <span class="text-white">Stable</span>
+              <span class="text-white" id="risk-disease">--</span>
             </div>
             <div class="flex justify-between border-b border-slate-800 pb-2">
               <span>Hidden Risk Patterns:</span>
-              <span class="text-emerald-400">Normal</span>
+              <span class="text-emerald-400" id="risk-pattern">Normal</span>
             </div>
             <div class="flex justify-between">
               <span>System Status:</span>
-              <span class="text-emerald-400 animate-pulse">● Connected</span>
+              <span class="text-emerald-400 animate-pulse" id="risk-status"
+                >● Connected</span
+              >
             </div>
           </div>
         </div>
@@ -122,8 +143,36 @@
     <footer
       class="border-t border-slate-900 py-6 text-center text-slate-500 text-xs bg-slate-950"
     >
-      &copy; 2026 EarthGuard AI. Protecting farms and communities in Eastern
-      Kenya.
+      &copy; AthGad ai, 2026; Powered by SamMutk Solutions, all rights reserved.
     </footer>
+
+    <script>
+      // Populate the Live Risk Signals card with processed telemetry data.
+      document.addEventListener("DOMContentLoaded", function () {
+        fetch("/api/v1/live-summary")
+          .then(function (res) {
+            return res.json();
+          })
+          .then(function (data) {
+            if (data.status !== "ok") return;
+
+            var drought = document.getElementById("risk-drought");
+            var disease = document.getElementById("risk-disease");
+            var pattern = document.getElementById("risk-pattern");
+            var status = document.getElementById("risk-status");
+
+            if (drought) drought.textContent = data.avg_climate + "%";
+            if (disease) disease.textContent = data.avg_health + "%";
+            if (pattern) {
+              pattern.textContent = data.hidden_pattern;
+              pattern.className = data.hidden_pattern_color;
+            }
+            if (status) status.textContent = "● " + data.system_status;
+          })
+          .catch(function () {
+            // Leave the default "Connected" status if the API is unavailable.
+          });
+      });
+    </script>
   </body>
 </html>

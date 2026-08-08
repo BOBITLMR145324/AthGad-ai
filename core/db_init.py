@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
@@ -10,13 +11,30 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', '.env')
 load_dotenv(dotenv_path)
 
+# PostgreSQL identifiers may contain only lowercase/uppercase letters, digits,
+# underscores, and dollar signs (and must not start with a digit). Enforcing
+# this prevents SQL-injection / broken DDL when DB_NAME comes from the .env.
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+
+
+def _validate_db_name(db_name: str) -> str:
+    """Validates the DB_NAME value so it is safe to interpolate into DDL."""
+    db_name = (db_name or "AthGad_db").strip()
+    if not _IDENTIFIER_RE.match(db_name):
+        raise ValueError(
+            f"DB_NAME '{db_name}' is not a valid PostgreSQL identifier. "
+            "Use only letters, digits, underscores or '$', and do not start with a digit."
+        )
+    return db_name
+
+
 def initialize_database():
     # Connection parameters to default postgres db to create the new database
     host = os.getenv("DB_HOST", "localhost")
     port = os.getenv("DB_PORT", "5432")
     user = os.getenv("DB_USER", "postgres")
     password = os.getenv("DB_PASSWORD")
-    db_name = os.getenv("DB_NAME", "earthguard_db")
+    db_name = _validate_db_name(os.getenv("DB_NAME", "AthGad_db"))
 
     # Connect to default postgres database to execute CREATE DATABASE
     conn = psycopg2.connect(host=host, port=port, user=user, password=password, database="postgres")
@@ -32,7 +50,7 @@ def initialize_database():
         cursor.close()
         conn.close()
 
-    # Reconnect to the target EarthGuard DB to initialize extensions and tables
+    # Reconnect to the target AthGad DB to initialize extensions and tables
     conn = psycopg2.connect(host=host, port=port, user=user, password=password, database=db_name)
     cursor = conn.cursor()
 
@@ -81,6 +99,7 @@ def initialize_database():
                 id SERIAL PRIMARY KEY,
                 full_name VARCHAR(100) NOT NULL,
                 email VARCHAR(120) NOT NULL UNIQUE,
+                county VARCHAR(50),
                 phone_number VARCHAR(20) NOT NULL,
                 password_hash VARCHAR(256) NOT NULL,
                 receive_email BOOLEAN DEFAULT FALSE,
@@ -93,7 +112,9 @@ def initialize_database():
                 trial_started_at TIMESTAMP,
                 trial_ends_at TIMESTAMP,
                 unsubscribed_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT NOW()
+                role VARCHAR(20) DEFAULT 'citizen',
+                subscription_started_at TIMESTAMP,
+                registered_at TIMESTAMP DEFAULT NOW()
             );
         """)
 
@@ -130,6 +151,7 @@ def initialize_database():
                 unsub_ref VARCHAR(150) PRIMARY KEY,  -- person's full name (+ numeric suffix on duplicates)
                 channel VARCHAR(10) NOT NULL,        -- 'sms' or 'email'
                 reason VARCHAR(255),
+                email VARCHAR(120),                  -- unique identity used to join feedback to users
                 suggested_answer VARCHAR(255) GENERATED ALWAYS AS (
                     CASE
                         WHEN reason IS NOT NULL AND reason <> '' THEN reason
@@ -139,6 +161,11 @@ def initialize_database():
                 unsubscribed_at TIMESTAMP DEFAULT NOW()
             );
         """)
+
+        # 5c. Idempotent migration: add the email column to existing databases so
+        # feedback rows can be joined to users on the unique email address
+        # instead of the non-unique display name.
+        cursor.execute("ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS email VARCHAR(120);")
 
         # Re-insert any legacy feedback rows under the new schema with unique unsub_ref keys
         if existing_unsub_columns and 'unsub_ref' not in existing_unsub_columns:
@@ -162,10 +189,17 @@ def initialize_database():
             if inserted:
                 print(f"Preserved {inserted} legacy unsubscription feedback record(s) under the new schema.")
 
-        # 5c. Idempotent migrations for existing databases
+# 5c. Idempotent migrations for existing databases
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMP;")
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMP;")
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS unsubscribed_at TIMESTAMP;")
+
+        # 5d. Admin role + subscription tracking (idempotent, for existing DBs)
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'citizen';")
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_started_at TIMESTAMP;")
+        # 5e. Per-county alert targeting (idempotent). Stores the county a user
+        #     is most interested in so alerts can be scoped to their area.
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS county VARCHAR(50);")
 
         # 6. Risk Alerts Staging Table (For Phase 4 downstream alerts)
         cursor.execute("""
