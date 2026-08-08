@@ -70,9 +70,9 @@ def format_subscription_period(start_dt, end_dt=None):
 def get_latest_risk_records(engine):
     """Returns the latest persisted risk-alert record for each covered county."""
     query = text("""
-        SELECT id, timestamp, county, calculated_score, risk_level, notified
+        SELECT alert_code, timestamp, county, calculated_score, risk_level, notified
         FROM (
-            SELECT id, timestamp, county, calculated_score, risk_level, notified,
+            SELECT alert_code, timestamp, county, calculated_score, risk_level, notified,
                    ROW_NUMBER() OVER (PARTITION BY county ORDER BY timestamp DESC) as rn
             FROM risk_alerts
         ) sub
@@ -200,6 +200,65 @@ def get_subscribed_members(engine):
     return members
 
 
+def get_report_snapshot(engine):
+    """
+    Lightweight LIVE snapshot of the current system state used by the reports
+    hub page and embedded into every generated PDF. Querying the database at
+    build/download time guarantees reports always reflect the latest data
+    (e.g. a user who just subscribed is immediately included).
+    """
+    snapshot = {
+        "total_users": 0,
+        "subscribed_count": 0,
+        "unsubscribed_count": 0,
+        "prediction_counties": 0,
+        "high_risk_counties": 0,
+        "dispatch_count": 0,
+        "dispatch_failed_count": 0,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+    try:
+        with engine.connect() as conn:
+            snapshot["total_users"] = conn.execute(
+                text("SELECT COUNT(*) FROM users")
+            ).fetchone()[0]
+            snapshot["subscribed_count"] = conn.execute(
+                text("SELECT COUNT(*) FROM users WHERE is_subscribed = True")
+            ).fetchone()[0]
+            snapshot["unsubscribed_count"] = conn.execute(
+                text("SELECT COUNT(*) FROM users WHERE is_subscribed = False "
+                     "AND unsubscribed_at IS NOT NULL")
+            ).fetchone()[0]
+            try:
+                snapshot["dispatch_count"] = conn.execute(
+                    text("SELECT COUNT(*) FROM alert_dispatch_logs")
+                ).fetchone()[0]
+                snapshot["dispatch_failed_count"] = conn.execute(
+                    text("SELECT COUNT(*) FROM alert_dispatch_logs "
+                         "WHERE status = 'FAILED'")
+                ).fetchone()[0]
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"admin_reports: report snapshot counts warning: {e}")
+
+    try:
+        with engine.connect() as conn:
+            prediction_counties = conn.execute(
+                text("SELECT COUNT(DISTINCT county) FROM risk_alerts")
+            ).fetchone()[0]
+            high_risk = conn.execute(
+                text("SELECT COUNT(DISTINCT county) FROM risk_alerts "
+                     "WHERE risk_level = 'High'")
+            ).fetchone()[0]
+            snapshot["prediction_counties"] = prediction_counties
+            snapshot["high_risk_counties"] = high_risk
+    except Exception as e:
+        print(f"admin_reports: report snapshot risk warning: {e}")
+
+    return snapshot
+
+
 def _ensure_unsubscriptions_email(engine):
     """
     Idempotently ensures the `unsubscriptions.email` column exists so feedback
@@ -262,6 +321,77 @@ def get_unsubscribed_members(engine):
             "subscription_period": format_subscription_period(start, row.unsubscribed_at),
         })
     return members
+
+
+def get_sms_delivery_logs(engine, limit: int = 100):
+    """
+    Returns the most recent outbound SMS delivery attempts (newest first) from
+    sms_delivery_logs so admins can debug SMS issues in realtime — status,
+    Africa's Talking status, cost, message id, and error detail.
+    """
+    query = text("""
+        SELECT logged_at, phone_number, name, message_type, tier, status,
+               http_status, at_status, cost, message_id, error_detail
+        FROM sms_delivery_logs
+        ORDER BY logged_at DESC
+        LIMIT :limit;
+    """)
+    logs = []
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(query, {"limit": limit}).fetchall()
+        for row in rows:
+            logs.append({
+                "logged_at": _fmt_dt(row.logged_at, "%Y-%m-%d %H:%M:%S"),
+                "phone_number": row.phone_number or "—",
+                "name": row.name or "",
+                "message_type": row.message_type or "notification",
+                "tier": row.tier or "none",
+                "status": row.status or "unknown",
+                "http_status": row.http_status,
+                "at_status": row.at_status or "",
+                "cost": row.cost or "",
+                "message_id": row.message_id or "",
+                "error_detail": row.error_detail or "",
+            })
+    except Exception as e:
+        print(f"admin_reports: sms delivery logs warning: {e}")
+    return logs
+
+
+def get_alert_dispatch_logs(engine, limit: int = 500):
+    """
+    Returns the most recent tracked SMS/email dispatches (newest first) from
+    alert_dispatch_logs. Each row carries the recipient identifier (phone
+    number for SMS, email address for email), the exact message that was sent,
+    and the recipient's subscription status at dispatch time.
+    """
+    query = text("""
+        SELECT dispatch_code, dispatched_at, channel, recipient, message_type,
+               message_content, subscription_status, status, error_detail
+        FROM alert_dispatch_logs
+        ORDER BY dispatched_at DESC
+        LIMIT :limit;
+    """)
+    logs = []
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(query, {"limit": limit}).fetchall()
+        for row in rows:
+            logs.append({
+                "dispatch_code": row.dispatch_code or "",
+                "dispatched_at": _fmt_dt(row.dispatched_at, "%Y-%m-%d %H:%M:%S"),
+                "channel": row.channel or "sms",
+                "recipient": row.recipient or "—",
+                "message_type": row.message_type or "alert",
+                "message": row.message_content or "",
+                "subscription_status": row.subscription_status or "unknown",
+                "status": row.status or "unknown",
+                "error_detail": row.error_detail or "",
+            })
+    except Exception as e:
+        print(f"admin_reports: alert dispatch logs warning: {e}")
+    return logs
 
 
 def prune_risk_alerts(engine, keep_days: int = 30):

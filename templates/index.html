@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AthGad AI - Early Warning Dashboard</title>
     <link rel="stylesheet" href="/static/css/style.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/js/chart.umd.min.js"></script>
   </head>
   <body class="bg-slate-900 text-slate-100 font-sans min-h-screen">
     <header
@@ -42,6 +42,28 @@
             class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase shadow-md shadow-emerald-950/20 transition duration-200 cursor-pointer"
           >
             Upgrade to Premium Alerts
+          </a>
+
+          <!-- My Profile -->
+          <a
+            href="/profile"
+            class="border border-slate-800 hover:bg-slate-900 text-slate-300 hover:text-emerald-400 font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase transition duration-200 cursor-pointer flex items-center gap-1.5"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="2"
+              stroke="currentColor"
+              class="w-3.5 h-3.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+              />
+            </svg>
+            My Profile
           </a>
 
           <!-- Sign Out -->
@@ -95,6 +117,18 @@
     </header>
 
     <main class="max-w-7xl mx-auto px-8 py-10 space-y-10">
+      <!-- Flash Messages (e.g. "Thank you for your feedback!", profile updates) -->
+      <div class="space-y-3">
+        {% with messages = get_flashed_messages(with_categories=true) %} {% for
+        category, message in messages %}
+        <div
+          class="flash-message p-4 rounded-xl text-xs font-semibold border {% if category == 'error' or category == 'warning' %}bg-rose-950/60 border-rose-800 text-rose-300 {% else %}bg-emerald-950/60 border-emerald-800 text-emerald-300{% endif %}"
+        >
+          {{ message }}
+        </div>
+        {% endfor %} {% endwith %}
+      </div>
+
       <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div
           class="bg-slate-950 border border-slate-800 p-6 rounded-xl flex flex-col justify-between"
@@ -255,5 +289,29 @@
     </main>
 
     <script src="/static/js/dashboard.js"></script>
+
+    <style>
+      /* Flash popups fade out linearly over 3 seconds. */
+      .flash-message {
+        transition: opacity 3s linear;
+      }
+      .flash-message.fading {
+        opacity: 0;
+      }
+    </style>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        var flashMessages = document.querySelectorAll(".flash-message");
+        flashMessages.forEach(function (msg) {
+          setTimeout(function () {
+            msg.classList.add("fading");
+            setTimeout(function () {
+              msg.style.display = "none";
+            }, 3000);
+          }, 500);
+        });
+      });
+    </script>
   </body>
 </html>

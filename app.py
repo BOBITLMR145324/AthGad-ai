@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session, render_template_string
@@ -32,10 +33,13 @@ from services.alert_service import AthGadAlertService
 from services.mpesa_service import initiate_stk_push
 from core.db_helper import get_db_engine
 from core.county_registry import get_county_advisory
+from core.id_codes import new_user_code
 
 # Admin workspace modules
-from core.admin_reports import get_analytics, prune_risk_alerts
+from core.admin_reports import get_analytics, prune_risk_alerts, get_report_snapshot
+from core.admin_reports import get_sms_delivery_logs, get_alert_dispatch_logs
 from services.pdf_report_service import build_admin_report
+from services.ingestion_runner import run_all_ingestion
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -50,10 +54,22 @@ app.secret_key = get_secret_key()
 csrf = CSRFProtect(app)
 
 # --- Security hardening: rate limiting (in-memory storage) ---
+def _static_assets_exempt() -> bool:
+    """
+    True for static file requests so CSS/JS/images do not consume a client's
+    per-IP rate-limit budget (each page already loads several assets).
+    """
+    try:
+        return request.endpoint == "static"
+    except Exception:
+        return False
+
+
 limiter = Limiter(
     key_func=client_identifier,
     app=app,
     default_limits=["200 per hour"],
+    default_limits_exempt_when=_static_assets_exempt,
     storage_uri="memory://",
 )
 
@@ -121,9 +137,9 @@ def _build_status_board(force_recompute=False):
     engine = get_db_engine()
 
     query = """
-        SELECT id, timestamp::text, county, calculated_score, risk_level, notified
+        SELECT alert_code, timestamp::text, county, calculated_score, risk_level, notified
         FROM (
-            SELECT id, timestamp, county, calculated_score, risk_level, notified,
+            SELECT alert_code, timestamp, county, calculated_score, risk_level, notified,
                    ROW_NUMBER() OVER (PARTITION BY county ORDER BY timestamp DESC) as rn
             FROM risk_alerts
         ) sub
@@ -260,9 +276,14 @@ def _generate_unsub_ref(connection, full_name):
     full name. If the name already appears in the table, a numeric suffix is
     appended (1, 2, ...) so every row remains unique.
     """
+    # Escape LIKE wildcards (% _) so names containing them match literally.
+    escaped = full_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     existing = connection.execute(
-        text("SELECT unsub_ref FROM unsubscriptions WHERE unsub_ref = :n OR unsub_ref LIKE :np"),
-        {"n": full_name, "np": f"{full_name}%"}
+        text(
+            "SELECT unsub_ref FROM unsubscriptions "
+            "WHERE unsub_ref = :n OR unsub_ref LIKE :np ESCAPE '\\'"
+        ),
+        {"n": full_name, "np": f"{escaped}%"},
     ).fetchall()
     count = len(existing)
     if count == 0:
@@ -382,9 +403,15 @@ def get_realtime_risk_status():
         risk_data["calamity_type"] = live_calamity
         risk_data["advisory"] = get_county_advisory(target_county, live_calamity)
 
-        # 5. Pass clean parameters to notification loops
+        # 5. Pass clean parameters to notification loops. Dispatch runs on a
+        #    background thread so SMS/email sends never block the API response.
         alert_service.engine = get_db_engine()
-        alert_service.dispatch_critical_notification(target_county, risk_data)
+        _alert_payload = dict(risk_data)
+        threading.Thread(
+            target=alert_service.dispatch_critical_notification,
+            args=(target_county, _alert_payload),
+            daemon=True,
+        ).start()
 
         # 6. Format numerical score to percentage string safely for JSON response
         score_val = risk_data.get("composite_risk_score", 0.0)
@@ -400,14 +427,14 @@ def get_realtime_risk_status():
 
 @app.route('/api/v1/alerts/history', methods=['GET'])
 def get_alert_history():
-    """Queries PostgreSQL to pull the latest system calculation for each of the 8 covered counties."""
+    """Queries PostgreSQL to pull the latest system calculation for each of the covered counties."""
     engine = get_db_engine()
-    covered_counties = ["Kitui", "Machakos", "Makueni", "Marsabit", "Isiolo", "Meru", "Embu", "Tharaka-Nithi"]
+    covered_counties = COVERED_COUNTIES
 
     query = """
-        SELECT id, timestamp::text, county, calculated_score, risk_level, notified
+        SELECT alert_code, timestamp::text, county, calculated_score, risk_level, notified
         FROM (
-            SELECT id, timestamp, county, calculated_score, risk_level, notified,
+            SELECT alert_code, timestamp, county, calculated_score, risk_level, notified,
                    ROW_NUMBER() OVER (PARTITION BY county ORDER BY timestamp DESC) as rn
             FROM risk_alerts
         ) sub
@@ -438,7 +465,7 @@ def get_alert_history():
                 formatted_score = f"{round(raw_score * 100, 1)}%" if raw_score <= 1.0 else f"{raw_score}%"
 
                 status_board.append({
-                    "id": record.id,
+                    "alert_code": record.alert_code,
                     "timestamp": record.timestamp,
                     "county": record.county,
                     "calamity_type": calamity_label,
@@ -448,7 +475,7 @@ def get_alert_history():
                 })
             else:
                 status_board.append({
-                    "id": 0,
+                    "alert_code": "",
                     "timestamp": "No Data Logged Yet",
                     "county": county,
                     "calamity_type": calamity_label,
@@ -503,9 +530,9 @@ def admin_risk_trend():
         # Latest persisted record per county (used as the 'current' anchor).
         engine = get_db_engine()
         latest_query = """
-            SELECT id, county, calculated_score, risk_level
+            SELECT alert_code, county, calculated_score, risk_level
             FROM (
-                SELECT id, county, calculated_score, risk_level,
+                SELECT alert_code, county, calculated_score, risk_level,
                        ROW_NUMBER() OVER (PARTITION BY county ORDER BY timestamp DESC) as rn
                 FROM risk_alerts
             ) sub
@@ -531,23 +558,28 @@ def admin_risk_trend():
                     live = analytics_engine.calculate_composite_risk(county)
                     current = round(float(live.get("composite_risk_score", 0.3)) * 100, 1)
 
-                forecast = analytics_engine.forecast_risk(county=county, horizon=7)
+                # Forecast a full 7-day window starting today (values are 0..1
+                # decimals). Every point is a distinct dynamic prediction and
+                # the window rolls forward automatically to the next 7 days
+                # once the first day passes.
+                forecast = analytics_engine.forecast_risk(
+                    county=county, horizon=7, start_offset=0)
                 scores = forecast.get("scores", [])
                 trend = forecast.get("trend", "stable")
+
+                # Build a 7-point trajectory from the forecast scores (0..1).
+                points = [round(s, 4) for s in scores]
+                if not points:
+                    points = [round(current / 100.0, 4)]
+                # Pad/truncate to exactly 7 points.
+                if len(points) < 7:
+                    points.extend([points[-1]] * (7 - len(points)))
+                points = points[:7]
             except Exception as e:
                 print(f"Risk trend error ({county}): {e}")
                 current = 0.0
-                scores = []
+                points = [0.0] * 7
                 trend = "stable"
-
-            # Build a 7-point trajectory: current value followed by forecast.
-            points = [current]
-            if scores:
-                points.extend([round(s * 100, 1) for s in scores])
-            # Pad/truncate to exactly 7 points.
-            if len(points) < 7:
-                points.extend([points[-1]] * (7 - len(points)))
-            points = points[:7]
 
             series.append({
                 "county": county,
@@ -578,30 +610,53 @@ def admin_risk_trend():
 @limiter.limit("10 per minute")
 def telemetry_refresh():
     """
-    Returns the latest processed risk status for all covered counties.
+    FULL live refresh for the public telemetry page.
 
-    Public endpoint (no login required) so the telemetry page Refresh button
-    can pull current data for every county. This is deliberately LIGHTWEIGHT:
-    it reuses the latest persisted risk records and only live-computes (and
-    persists) counties with no record yet. The expensive forced full recompute
-    is reserved for the admin-only /api/v1/admin/telemetry/refresh endpoint.
+    Refreshes data for ALL covered counties in a single request: it re-runs
+    the health/climate/space-weather ingestion first, then force-recomputes the
+    composite risk for every county (force_recompute=True) so the returned
+    status board is genuinely real-time — not a cached snapshot.
+
+    Rate-limited to 10 req/min so anonymous visitors cannot spam the expensive
+    external ingestions and per-county ML recomputations.
     """
     try:
-        summary = _build_status_board(force_recompute=False)
+        ingestion = run_all_ingestion()
+        summary = _build_status_board(force_recompute=True)
         return jsonify({
             "status": "ok",
             "status_board": summary["status_board"],
             "avg_climate": summary["avg_climate"],
             "avg_health": summary["avg_health"],
             "high_risk_count": summary["high_risk_count"],
+            "ingestion": ingestion,
             "last_sync": _eat_str(),
         }), 200
 
     except Exception as e:
-        print(f"Telemetry refresh error: {e}")
+        print(f"Admin telemetry refresh error: {e}")
         return jsonify({
             "status": "error",
             "message": "We could not refresh the live telemetry data right now. Please try again."
+        }), 500
+
+
+@app.route('/api/v1/ingest/all', methods=['POST'])
+@admin_required
+@limiter.limit("10 per hour")
+def ingest_all_data():
+    """
+    On-demand ingestion of health, climate and space-weather data.
+    Admin-only so anonymous visitors cannot trigger external API calls.
+    """
+    try:
+        results = run_all_ingestion()
+        return jsonify({"status": "ok", "ingestion": results}), 200
+    except Exception as e:
+        print(f"Ingestion endpoint error: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Ingestion failed. See server logs for details."
         }), 500
 
 
@@ -611,18 +666,23 @@ def telemetry_refresh():
 def admin_telemetry_refresh():
     """
     Force-recomputes the live composite risk for every covered county and
-    returns fresh JSON. Admin-only endpoint used by the System Analytics
-    page's Refresh button so expensive ML recomputation cannot be triggered
-    by anonymous visitors. Old risk_alerts rows are pruned after each run.
+    returns the FULL system analytics payload. Admin-only endpoint used by the
+    System Analytics page's Refresh button so expensive ML recomputation cannot
+    be triggered by anonymous visitors. Ingested health/climate/space-weather
+    data is refreshed first so the recompute works with the latest surveillance
+    records, and old risk_alerts rows are pruned after each run.
     """
     try:
+        ingestion = run_all_ingestion()
         summary = _build_status_board(force_recompute=True)
+        # Re-aggregate the full analytics (KPIs, distribution, board, panel)
+        # from the freshly recomputed records so the refresh updates every
+        # widget on the analytics page, not just the charts.
+        analytics = get_analytics(get_db_engine())
         return jsonify({
             "status": "ok",
-            "status_board": summary["status_board"],
-            "avg_climate": summary["avg_climate"],
-            "avg_health": summary["avg_health"],
-            "high_risk_count": summary["high_risk_count"],
+            "analytics": analytics,
+            "ingestion": ingestion,
             "last_sync": _eat_str(),
         }), 200
 
@@ -631,6 +691,34 @@ def admin_telemetry_refresh():
         return jsonify({
             "status": "error",
             "message": "We could not refresh the live telemetry data right now. Please try again."
+        }), 500
+
+
+@app.route('/api/v1/admin/analytics/summary', methods=['GET'])
+@admin_required
+@limiter.limit("60 per minute")
+def admin_analytics_summary():
+    """
+    LIGHTWEIGHT analytics snapshot for the System Analytics page. Reads the
+    latest persisted risk records (same realtime output the dashboard shows)
+    and only live-recomputes counties with no record yet. Unlike the Refresh
+    endpoint it does NOT re-ingest or force-recompute, so it is cheap enough to
+    poll for auto-refresh. Returns the same analytics dict shape as
+    /api/v1/admin/telemetry/refresh so the front-end reuses one renderer.
+    """
+    try:
+        engine = get_db_engine()
+        analytics = get_analytics(engine)
+        return jsonify({
+            "status": "ok",
+            "analytics": analytics,
+            "last_sync": _eat_str(),
+        }), 200
+    except Exception as e:
+        print(f"Admin analytics summary error: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Could not load the analytics summary right now."
         }), 500
 
 
@@ -665,7 +753,7 @@ def handle_registration():
     try:
         with engine.connect() as connection:
             existing_user = connection.execute(text("""
-                SELECT id FROM users WHERE email = :email OR phone_number = :phone;
+                SELECT user_code FROM users WHERE email = :email OR phone_number = :phone;
             """), {"email": email, "phone": phone_number}).fetchone()
 
         if existing_user:
@@ -676,13 +764,14 @@ def handle_registration():
 
         with engine.begin() as connection:
             connection.execute(text("""
-                INSERT INTO users (full_name, email, phone_number, password_hash,
+                INSERT INTO users (user_code, full_name, email, phone_number, password_hash,
                                    receive_email, is_subscribed, subscribe_sms, subscribe_email,
                                    dispatch_preference)
-                VALUES (:name, :email, :phone, :hash,
+                VALUES (:user_code, :name, :email, :phone, :hash,
                         :email_opt, :global_sub, :sms_opt, :email_opt,
                         'sms');
             """), {
+                "user_code": new_user_code(),
                 "name": full_name,
                 "email": email,
                 "phone": phone_number,
@@ -696,7 +785,7 @@ def handle_registration():
         session['user_name'] = full_name
         session['user_role'] = 'citizen'
 
-        flash("Registration successful! Welcome to AthGad AI.", "success")
+        flash("Registration successful! Welcome to AthGad AI. Activate your 30-day free premium trial for detailed risk reports via Alert Preferences.", "success")
         return redirect(url_for('dashboard'))
 
     except Exception as e:
@@ -763,6 +852,138 @@ def handle_logout():
     session.clear()
     flash("You have been signed out safely.", "info")
     return redirect(url_for('login_page'))
+
+
+# =====================================================================
+# PROFILE MANAGEMENT (Citizens & Admins)
+# =====================================================================
+
+def _load_profile(email):
+    """Fetches the current profile fields for a user from the database."""
+    engine = get_db_engine()
+    with engine.connect() as connection:
+        row = connection.execute(text("""
+            SELECT user_code, full_name, email, phone_number, county, role,
+                   is_subscribed, payment_status, registered_at, trial_ends_at
+            FROM users
+            WHERE email = :email;
+        """), {"email": email}).fetchone()
+    if not row:
+        return None
+    return {
+        "user_code": row.user_code,
+        "full_name": row.full_name,
+        "email": row.email,
+        "phone_number": row.phone_number,
+        "county": row.county,
+        "role": row.role,
+        "is_subscribed": bool(row.is_subscribed),
+        "payment_status": row.payment_status,
+        "registered_at": row.registered_at,
+        "trial_ends_at": row.trial_ends_at,
+    }
+
+
+@app.route('/profile', methods=['GET', 'POST'])
+@limiter.limit("20 per minute")
+def profile_page():
+    """
+    Shared profile page for citizens and admins.
+    GET: displays the current profile with an editable form.
+    POST: updates full name, phone number and county, and optionally changes
+          the password (requires the current password to be verified first).
+    """
+    if 'user_email' not in session:
+        flash("Please sign in to manage your profile.", "warning")
+        return redirect(url_for('login_page'))
+
+    email = session['user_email']
+
+    if request.method == 'POST':
+        full_name = request.form.get('full_name', '').strip()
+        phone_number = request.form.get('phone_number', '').strip()
+        county = request.form.get('county', '').strip()
+        current_password = request.form.get('current_password', '')
+        new_password = request.form.get('new_password', '')
+        confirm_password = request.form.get('confirm_password', '')
+
+        if not full_name or not phone_number:
+            flash("Please provide both your full name and phone number.", "error")
+            return redirect(url_for('profile_page'))
+
+        if county and county not in COVERED_COUNTIES:
+            flash("Please choose a valid county from the list.", "error")
+            return redirect(url_for('profile_page'))
+
+        engine = get_db_engine()
+        try:
+            with engine.connect() as connection:
+                stored = connection.execute(
+                    text("SELECT password_hash FROM users WHERE email = :email"),
+                    {"email": email},
+                ).fetchone()
+
+            if not stored:
+                flash("Your account could not be found. Please sign in again.", "error")
+                return redirect(url_for('logout'))
+
+            if new_password or confirm_password or current_password:
+                if not (current_password and new_password and confirm_password):
+                    audit("profile_update", actor=email, outcome="failed",
+                          details={"reason": "password_fields_incomplete"})
+                    flash("Please fill in all the fields to update the password.", "error")
+                    return redirect(url_for('profile_page'))
+                if not check_password_hash(stored.password_hash, current_password):
+                    audit("profile_update", actor=email, outcome="failed",
+                          details={"reason": "wrong_current_password"})
+                    flash("Your current password is incorrect. Password not changed.", "error")
+                    return redirect(url_for('profile_page'))
+                if len(new_password) < 8:
+                    flash("Your new password must be at least 8 characters long.", "error")
+                    return redirect(url_for('profile_page'))
+                if new_password != confirm_password:
+                    flash("The new passwords you entered do not match.", "error")
+                    return redirect(url_for('profile_page'))
+
+            with engine.begin() as connection:
+                connection.execute(text("""
+                    UPDATE users
+                    SET full_name = :name,
+                        phone_number = :phone,
+                        county = :county,
+                        password_hash = COALESCE(:new_hash, password_hash)
+                    WHERE email = :email;
+                """), {
+                    "name": full_name,
+                    "phone": phone_number,
+                    "county": county or None,
+                    "new_hash": generate_password_hash(new_password) if new_password else None,
+                    "email": email,
+                })
+        except Exception as e:
+            print(f"Profile update error: {e}")
+            flash("Could not save your profile changes. Please try again.", "error")
+            return redirect(url_for('profile_page'))
+
+        session['user_name'] = full_name
+        audit("profile_update", actor=email, outcome="success",
+              details={"password_changed": bool(new_password)})
+        if new_password:
+            flash("Password successfully changed!", "success")
+        else:
+            flash("Your profile has been updated successfully.", "success")
+        return redirect(url_for('profile_page'))
+
+    profile = _load_profile(email)
+    if not profile:
+        flash("Your account could not be found. Please sign in again.", "error")
+        return redirect(url_for('logout'))
+
+    return render_template(
+        'profile.html',
+        profile=profile,
+        covered_counties=COVERED_COUNTIES,
+    )
 
 
 # =====================================================================
@@ -849,6 +1070,7 @@ def subscribe_portal():
             # Determine trial dates (carry over remaining days)
             trial_started_at = user.trial_started_at
             trial_ends_at = user.trial_ends_at
+            carried_over_days = 0
 
             # Default: start a new trial
             new_trial_start = now
@@ -865,6 +1087,7 @@ def subscribe_portal():
                     # Trial still active — carry over remaining days
                     remaining = (trial_ends_at - now).days
                     if remaining > 0:
+                        carried_over_days = remaining
                         new_trial_end = now + timedelta(days=remaining)
                         new_trial_start = trial_started_at  # preserve original start
                     else:
@@ -919,12 +1142,16 @@ def subscribe_portal():
                             email=user_row.email,
                             trial_end_date=new_trial_end.strftime("%Y-%m-%d"),
                             opt_sms=opt_sms,
-                            opt_email=opt_email
+                            opt_email=opt_email,
+                            carried_over_days=carried_over_days,
                         )
                 except Exception as notify_err:
                     print(f"Trial notice send warning: {notify_err}")
 
-            flash("Your alert preferences are saved. Your free trial has started!", "success")
+            if carried_over_days > 0:
+                flash(f"Your alert preferences are saved. {carried_over_days} free-trial day(s) carried over from your previous subscription — premium alerts resume now!", "success")
+            else:
+                flash("Your alert preferences are saved. Your free trial has started!", "success")
             return redirect(url_for('dashboard'))
 
         except Exception as e:
@@ -1136,11 +1363,11 @@ def _perform_unsubscribe(email: str):
                     <p style="color: #94a3b8; line-height: 1.6; font-size: 14px;">You will no longer receive premium alert emails for <strong>{{ email }}</strong>.</p>
                     <p style="color: #eab308; line-height: 1.6; font-size: 13px;">Note: Important safety warnings for your county will still be sent when needed.</p>
                     <p style="color: #94a3b8; font-size: 12px; margin-top: 20px;">If you're willing, please tell us why:<br>
-                    <a href="http://127.0.0.1:5000/unsubscribe/reason?email={{ email }}" style="color: #38bdf8;">Share Your Feedback</a></p>
+                    <a href="{{ base_url }}/unsubscribe/reason?email={{ email }}" style="color: #38bdf8;">Share Your Feedback</a></p>
                 </div>
             </body>
             </html>
-            """, email=email), 200
+            """, email=email, base_url=alert_service.base_url), 200
         else:
             flash("No account registered under that email address.", "error")
             return redirect(url_for('dashboard'))
@@ -1327,7 +1554,20 @@ def check_trial_expiry():
     Scans all users whose trial has ended and payment_status is not 'active'.
     Unsubscribes them (removes premium access, notifies).
     Called periodically (e.g., via cron or scheduler).
+
+    Destructive, so it requires explicit opt-in via the TRIAL_EXPIRY_CRON
+    environment variable (set to "1") before it will act. Without it the
+    endpoint is a safe no-op, protecting users from accidental mass
+    unsubscription if the URL is hit by mistake or by scanners.
     """
+    if os.environ.get("TRIAL_EXPIRY_CRON", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return jsonify({
+            "status": "disabled",
+            "expired_count": 0,
+            "message": ("Trial expiry scan is disabled. Set TRIAL_EXPIRY_CRON=1 "
+                        "in the environment to enable it."),
+        }), 200
+
     engine = get_db_engine()
     alert_service.engine = engine
     now = datetime.now()
@@ -1406,6 +1646,118 @@ def admin_reports():
     return render_template('admin/reports.html')
 
 
+@app.route('/api/v1/admin/report-snapshot')
+@admin_required
+@limiter.limit("30 per minute")
+def admin_report_snapshot():
+    """
+    LIVE lightweight snapshot of the report-relevant system state.
+    Consumed by the reports hub so the subscribed/unsubscribed counts and
+    prediction coverage always reflect the current database — reports are
+    regenerated on every download, never cached or static.
+    """
+    try:
+        engine = get_db_engine()
+        snapshot = get_report_snapshot(engine)
+        return jsonify({"status": "ok", "snapshot": snapshot}), 200
+    except Exception as e:
+        print(f"Report snapshot error: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Could not load the live report snapshot."
+        }), 500
+
+
+@app.route('/api/v1/admin/sms-delivery')
+@admin_required
+@limiter.limit("60 per minute")
+def admin_sms_delivery_api():
+    """
+    REALTIME SMS delivery debugging feed for admins. Returns the most recent
+    outbound SMS attempts (newest first) from sms_delivery_logs so an SMS issue
+    can be diagnosed live — status, Africa's Talking status, cost, message id,
+    and error detail — without grepping server logs or restarting the app.
+    """
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        limit = max(1, min(limit, 500))
+        engine = get_db_engine()
+        logs = get_sms_delivery_logs(engine, limit=limit)
+        summary = {
+            "total": len(logs),
+            "success": sum(1 for l in logs if l["status"] == "SUCCESS"),
+            "failed": sum(1 for l in logs if l["status"] == "FAILED"),
+            "simulated": sum(1 for l in logs if l["status"] == "SIMULATED"),
+        }
+        return jsonify({
+            "status": "ok",
+            "summary": summary,
+            "logs": logs,
+            "last_sync": _eat_str(),
+        }), 200
+    except Exception as e:
+        print(f"SMS delivery API error: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Could not load the SMS delivery logs right now."
+        }), 500
+
+
+@app.route('/admin/sms-delivery')
+@admin_required
+def admin_sms_delivery_page():
+    """Admin realtime SMS delivery debugging console (auto-refreshing)."""
+    audit("admin_view", actor=session.get('user_email'),
+          outcome="view", details={"page": "sms_delivery"})
+    return render_template('admin/sms_delivery.html',
+                           admin_name=session.get('user_name', 'Admin'))
+
+
+@app.route('/api/v1/admin/dispatch-logs')
+@admin_required
+@limiter.limit("60 per minute")
+def admin_dispatch_logs_api():
+    """
+    REALTIME alert-dispatch feed for admins. Returns the most recent tracked
+    SMS/email dispatches (newest first) from alert_dispatch_logs with the
+    recipient, the exact message sent, and the subscription status at dispatch
+    time. Powers the realtime admin console and feeds the downloadable report.
+    """
+    try:
+        limit = request.args.get('limit', 200, type=int)
+        limit = max(1, min(limit, 1000))
+        channel = (request.args.get('channel') or '').strip().lower()
+        status = (request.args.get('status') or '').strip().upper()
+        engine = get_db_engine()
+        logs = get_alert_dispatch_logs(engine, limit=limit)
+
+        if channel and channel != 'all':
+            logs = [l for l in logs if l["channel"] == channel]
+        if status and status != 'ALL':
+            logs = [l for l in logs if l["status"] == status]
+
+        summary = {
+            "total": len(logs),
+            "sms": sum(1 for l in logs if l["channel"] == "sms"),
+            "email": sum(1 for l in logs if l["channel"] == "email"),
+            "success": sum(1 for l in logs if l["status"] == "SUCCESS"),
+            "failed": sum(1 for l in logs if l["status"] == "FAILED"),
+            "simulated": sum(1 for l in logs if l["status"] == "SIMULATED"),
+        }
+        return jsonify({
+            "status": "ok",
+            "summary": summary,
+            "logs": logs,
+            "last_sync": _eat_str(),
+        }), 200
+    except Exception as e:
+        print(f"Dispatch logs API error: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Could not load the alert dispatch logs right now."
+        }), 500
+
+
 @app.route('/admin/analytics')
 @admin_required
 def admin_analytics():
@@ -1432,14 +1784,14 @@ def admin_users():
     try:
         with engine.connect() as connection:
             rows = connection.execute(text("""
-                SELECT id, full_name, email, role, is_subscribed, payment_status,
+                SELECT user_code, full_name, email, role, is_subscribed, payment_status,
                        COALESCE(subscription_started_at, registered_at) AS sub_at
                 FROM users
-                ORDER BY id;
+                ORDER BY user_code;
             """)).fetchall()
         for row in rows:
             users.append({
-                "id": row.id,
+                "user_code": row.user_code,
                 "full_name": row.full_name,
                 "email": row.email,
                 "role": row.role,
@@ -1458,17 +1810,17 @@ def admin_users():
     )
 
 
-@app.route('/admin/users/<int:user_id>/promote', methods=['POST'])
+@app.route('/admin/users/<string:user_code>/promote', methods=['POST'])
 @admin_required
-def admin_promote_user(user_id):
+def admin_promote_user(user_code):
     """Promotes a citizen account to the admin role. Audited."""
     engine = get_db_engine()
     email = session.get('user_email')
     try:
         with engine.begin() as connection:
             target = connection.execute(
-                text("SELECT email, role FROM users WHERE id = :uid"),
-                {"uid": user_id},
+                text("SELECT email, role FROM users WHERE user_code = :uc"),
+                {"uc": user_code},
             ).fetchone()
             if not target:
                 flash("User not found.", "error")
@@ -1480,8 +1832,8 @@ def admin_promote_user(user_id):
                 flash(f"{target.email} is already an admin.", "info")
                 return redirect(url_for('admin_users'))
             connection.execute(
-                text("UPDATE users SET role = 'admin' WHERE id = :uid"),
-                {"uid": user_id},
+                text("UPDATE users SET role = 'admin' WHERE user_code = :uc"),
+                {"uc": user_code},
             )
         audit("admin_role_change", actor=email,
               target=target.email, outcome="promote")
@@ -1492,17 +1844,17 @@ def admin_promote_user(user_id):
     return redirect(url_for('admin_users'))
 
 
-@app.route('/admin/users/<int:user_id>/demote', methods=['POST'])
+@app.route('/admin/users/<string:user_code>/demote', methods=['POST'])
 @admin_required
-def admin_demote_user(user_id):
+def admin_demote_user(user_code):
     """Demotes an admin back to the citizen role. Audited."""
     engine = get_db_engine()
     email = session.get('user_email')
     try:
         with engine.begin() as connection:
             target = connection.execute(
-                text("SELECT email, role FROM users WHERE id = :uid"),
-                {"uid": user_id},
+                text("SELECT email, role FROM users WHERE user_code = :uc"),
+                {"uc": user_code},
             ).fetchone()
             if not target:
                 flash("User not found.", "error")
@@ -1514,8 +1866,8 @@ def admin_demote_user(user_id):
                 flash(f"{target.email} is not an admin.", "info")
                 return redirect(url_for('admin_users'))
             connection.execute(
-                text("UPDATE users SET role = 'citizen' WHERE id = :uid"),
-                {"uid": user_id},
+                text("UPDATE users SET role = 'citizen' WHERE user_code = :uc"),
+                {"uc": user_code},
             )
         audit("admin_role_change", actor=email,
               target=target.email, outcome="demote")
@@ -1541,6 +1893,7 @@ def admin_report_pdf(report_type):
         "disease_outbreaks",
         "subscribed_members",
         "unsubscribed_members",
+        "alert_dispatch_logs",
     }
     if report_type not in allowed:
         audit("admin_report", actor=session.get('user_email'),
@@ -1560,6 +1913,7 @@ def admin_report_pdf(report_type):
             "disease_outbreaks": "disease_outbreaks_report.pdf",
             "subscribed_members": "subscribed_members_report.pdf",
             "unsubscribed_members": "unsubscribed_members_report.pdf",
+            "alert_dispatch_logs": "alert_dispatch_logs_report.pdf",
         }
         response = app.response_class(
             pdf_bytes,
@@ -1568,6 +1922,10 @@ def admin_report_pdf(report_type):
         response.headers['Content-Disposition'] = (
             f'attachment; filename={filenames[report_type]}'
         )
+        # Always regenerate: never let browsers/ISPs serve a stale cached copy.
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
         return response
 
     except ImportError:

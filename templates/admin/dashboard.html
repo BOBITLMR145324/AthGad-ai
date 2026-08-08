@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin Workspace - AthGad AI</title>
     <link rel="stylesheet" href="/static/css/style.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/js/chart.umd.min.js"></script>
   </head>
   <body class="bg-slate-950 text-slate-100 min-h-screen">
     <!-- Admin Header -->
@@ -59,6 +59,11 @@
         >PDF Reports</a
       >
       <a
+        href="/admin/sms-delivery"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Realtime SMS Delivery</a
+      >
+      <a
         href="/admin/analytics"
         class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
         >System Analytics</a
@@ -67,6 +72,11 @@
         href="/admin/users"
         class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
         >Users</a
+      >
+      <a
+        href="/profile"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >My Profile</a
       >
     </nav>
 
@@ -207,7 +217,7 @@
           class="bg-slate-950 border border-slate-800 rounded-2xl p-8 lg:col-span-2"
         >
           <div
-            class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6"
+            class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4"
           >
             <div>
               <h3
@@ -216,7 +226,8 @@
                 Live County Risk Trend (All 8 Counties)
               </h3>
               <p class="text-[11px] text-slate-500 mt-1">
-                7-day risk trajectory per county — updated in realtime.
+                7-day risk trajectory per county — shared zoomed Y-axis. Click
+                a chip to toggle, double-click to solo, hover to focus.
               </p>
             </div>
             <div class="flex items-center gap-3">
@@ -246,7 +257,12 @@
               </button>
             </div>
           </div>
-          <div class="h-80 w-full">
+          <div
+            id="countyTrendToggles"
+            class="mb-5 flex flex-wrap items-center gap-2"
+          ></div>
+
+          <div class="relative h-[440px] w-full">
             <canvas id="countyTrendChart"></canvas>
           </div>
         </div>
@@ -264,11 +280,45 @@
         opacity: 0;
         transform: translateY(-6px);
       }
+
+      /* County risk trend chart interactions. */
+      .trend-chip {
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 8px;
+        font-size: 11px;
+        font-weight: 700;
+        color: #cbd5e1;
+        background: #1e293b;
+        border: 1px solid #334155;
+        transition: all 0.2s ease;
+        user-select: none;
+      }
+      .trend-chip:hover {
+        border-color: #10b981;
+        color: #ffffff;
+      }
+      .trend-chip.trend-chip-off {
+        opacity: 0.35;
+        text-decoration: line-through;
+      }
+      .trend-chip.trend-chip-focus {
+        border-color: #10b981;
+        color: #ffffff;
+        box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.35);
+      }
+      .trend-chip.trend-chip-all {
+        background: #10b981;
+        color: #04251c;
+        border-color: #10b981;
+      }
     </style>
 
     <script>
-      // Chart-level variable so we can update in place on refresh.
-      let countyTrendChartInstance = null;
+      // Live County Risk Trend — single combined line chart (all 8 counties).
       const countyTrendPalette = [
         "#10b981",
         "#3b82f6",
@@ -279,6 +329,13 @@
         "#ec4899",
         "#84cc16",
       ];
+      const countyTrendState = {
+        labels: [],
+        series: [],
+        colors: {}, // county -> line color
+        visible: {}, // county -> bool (toggle state)
+        chart: null, // single Chart instance
+      };
 
       // Apply the risk-distribution percentage widths to the progress bars.
       // Widths are read from data-fill-width attributes (rendered by Jinja)
@@ -310,7 +367,7 @@
         loadRiskTrend();
       });
 
-      // Fetch and render the animated line graph for all 8 counties.
+      // Fetch and render the combined per-county risk trend line chart.
       function loadRiskTrend() {
         var statusEl = document.getElementById("trend-refresh-status");
         if (statusEl) statusEl.textContent = "Refreshing...";
@@ -331,73 +388,313 @@
           });
       }
 
-      function renderCountyTrend(data) {
-        var canvas = document.getElementById("countyTrendChart");
-        if (!canvas) return;
+      // Compute the Y-axis bounds. The axis starts at 0 and the ceiling grows
+      // dynamically toward 1 to fit the current range of predicted risk, so the
+      // scale always reflects the highest prediction among visible counties.
+      function computeTrendAxis() {
+        var vals = [];
+        countyTrendState.series.forEach(function (s) {
+          if (countyTrendState.visible[s.county] === false) return;
+          (s.points || []).forEach(function (v) {
+            if (typeof v === "number") vals.push(v);
+          });
+        });
 
-        var labels = data.labels || [];
-        var datasets = (data.series || []).map(function (s, i) {
+        var min = 0;
+        var max = 1;
+        if (vals.length) {
+          var hi = Math.max.apply(null, vals);
+          // Round the ceiling up to a clean step so it grows with the data.
+          max = Math.min(1, Math.ceil(hi * 10) / 10);
+          if (max <= hi) max = Math.min(1, hi + 0.05);
+        }
+        return {
+          min: Math.round(min * 1000) / 1000,
+          max: Math.round(max * 1000) / 1000,
+        };
+      }
+
+      // Build the datasets for the single combined line chart.
+      function buildTrendDatasets() {
+        return countyTrendState.series.map(function (s) {
+          var color = countyTrendState.colors[s.county];
           return {
             label: s.county,
-            data: s.points,
-            borderColor: countyTrendPalette[i % countyTrendPalette.length],
-            backgroundColor:
-              countyTrendPalette[i % countyTrendPalette.length] + "22",
+            county: s.county,
+            data: s.points || [],
+            borderColor: color,
+            backgroundColor: color + "22",
             borderWidth: 2,
-            pointRadius: 3,
+            pointRadius: 2,
+            pointHoverRadius: 5,
             tension: 0.4,
             fill: false,
           };
         });
+      }
 
-        if (countyTrendChartInstance) {
-          countyTrendChartInstance.data.labels = labels;
-          countyTrendChartInstance.data.datasets = datasets;
-          countyTrendChartInstance.update();
-          return;
-        }
+      function buildCombinedChart() {
+        var canvas = document.getElementById("countyTrendChart");
+        if (!canvas) return;
 
-        countyTrendChartInstance = new Chart(canvas, {
+        var axis = computeTrendAxis();
+
+        countyTrendState.chart = new Chart(canvas, {
           type: "line",
-          data: { labels: labels, datasets: datasets },
+          data: {
+            labels: countyTrendState.labels,
+            datasets: buildTrendDatasets(),
+          },
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            animation: { duration: 1200, easing: "easeOutQuart" },
-            interaction: { mode: "index", intersect: false },
+            animation: { duration: 1000, easing: "easeOutQuart" },
+            // Hover targets a single line; the tooltip still shows all counties.
+            interaction: { mode: "nearest", intersect: true },
+            onHover: function (event, activeElements, chart) {
+              if (!activeElements.length) {
+                clearHoverDim();
+                return;
+              }
+              var county = chart.data.datasets[activeElements[0].datasetIndex].county;
+              applyHoverDim(county);
+            },
             plugins: {
               legend: {
                 position: "bottom",
-                labels: { color: "#94a3b8", boxWidth: 10 },
+                labels: {
+                  color: "#94a3b8",
+                  boxWidth: 12,
+                  padding: 12,
+                  font: { size: 11 },
+                  usePointStyle: true,
+                  pointStyle: "line",
+                },
+                onClick: legendClickHandler,
+                onHover: function (event, legendItem, legend) {
+                  if (!legendItem) return;
+                  var county =
+                    legend.chart.data.datasets[legendItem.datasetIndex].county;
+                  applyHoverDim(county);
+                },
+                onLeave: function () {
+                  clearHoverDim();
+                },
               },
               tooltip: {
+                interaction: { mode: "index", intersect: false },
                 callbacks: {
+                  title: function (items) {
+                    return items.length
+                      ? countyTrendState.labels[items[0].dataIndex]
+                      : "";
+                  },
                   label: function (ctx) {
-                    return ctx.dataset.label + ": " + ctx.parsed.y + "%";
+                    return (
+                      " " +
+                      ctx.dataset.label +
+                      ": " +
+                      (ctx.parsed.y * 100).toFixed(1) +
+                      "%"
+                    );
                   },
                 },
               },
             },
             scales: {
               y: {
-                min: 0,
-                max: 100,
+                min: axis.min,
+                max: axis.max,
                 grid: { color: "#1e293b" },
+                border: { display: false },
                 ticks: {
                   color: "#94a3b8",
-                  stepSize: 10,
+                  maxTicksLimit: 6,
                   callback: function (v) {
-                    return v + "%";
+                    return v.toFixed(2);
                   },
                 },
               },
               x: {
                 grid: { color: "#1e293b" },
+                border: { display: false },
                 ticks: { color: "#94a3b8" },
               },
             },
           },
         });
+      }
+
+      function legendClickHandler(event, legendItem, legend) {
+        var chart = legend.chart;
+        var county = chart.data.datasets[legendItem.datasetIndex].county;
+        var native = event.native;
+        if (native && (native.shiftKey || native.metaKey || native.ctrlKey)) {
+          soloCounty(county);
+        } else {
+          toggleCounty(county);
+        }
+      }
+
+      function buildTrendToggles() {
+        var bar = document.getElementById("countyTrendToggles");
+        if (!bar) return;
+        bar.innerHTML = "";
+
+        var allBtn = document.createElement("button");
+        allBtn.type = "button";
+        allBtn.className = "trend-chip trend-chip-all";
+        allBtn.textContent = "All";
+        allBtn.title = "Show every county";
+        allBtn.addEventListener("click", showAllCounties);
+        bar.appendChild(allBtn);
+
+        countyTrendState.series.forEach(function (s) {
+          var chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "trend-chip";
+          chip.setAttribute("data-county", s.county);
+          chip.title = "Click to toggle · double-click to solo this county";
+
+          var dot = document.createElement("span");
+          dot.className = "w-2 h-2 rounded-full shrink-0";
+          dot.style.backgroundColor = countyTrendState.colors[s.county];
+          chip.appendChild(dot);
+          chip.appendChild(document.createTextNode(s.county));
+
+          chip.addEventListener("click", function () {
+            toggleCounty(s.county);
+          });
+          chip.addEventListener("dblclick", function () {
+            soloCounty(s.county);
+          });
+          chip.addEventListener("mouseenter", function () {
+            if (countyTrendState.visible[s.county] !== false) {
+              applyHoverDim(s.county);
+            }
+          });
+          chip.addEventListener("mouseleave", clearHoverDim);
+          bar.appendChild(chip);
+        });
+      }
+
+      // Update the single chart in place (data, zoomed axis, visibility).
+      function applyTrendView() {
+        var chart = countyTrendState.chart;
+        if (!chart) return;
+
+        var axis = computeTrendAxis();
+        chart.options.scales.y.min = axis.min;
+        chart.options.scales.y.max = axis.max;
+
+        chart.data.datasets.forEach(function (ds) {
+          var hidden = countyTrendState.visible[ds.county] === false;
+          ds.hidden = hidden;
+          if (!hidden) {
+            ds.borderColor = countyTrendState.colors[ds.county];
+            ds.borderWidth = 2;
+            ds.backgroundColor = countyTrendState.colors[ds.county] + "22";
+          }
+        });
+        chart.update();
+
+        countyTrendState.series.forEach(function (s) {
+          var hidden = countyTrendState.visible[s.county] === false;
+          var chip = document.querySelector(
+            '#countyTrendToggles .trend-chip[data-county="' + s.county + '"]'
+          );
+          if (chip) chip.classList.toggle("trend-chip-off", hidden);
+        });
+      }
+
+      function toggleCounty(county) {
+        countyTrendState.visible[county] = !countyTrendState.visible[county];
+        applyTrendView();
+      }
+
+      function soloCounty(county) {
+        countyTrendState.series.forEach(function (s) {
+          countyTrendState.visible[s.county] = s.county === county;
+        });
+        applyTrendView();
+      }
+
+      function showAllCounties() {
+        countyTrendState.series.forEach(function (s) {
+          countyTrendState.visible[s.county] = true;
+        });
+        clearHoverDim();
+        applyTrendView();
+      }
+
+      // Hover focus: brighten one line and dim the rest to ~18% opacity.
+      function applyHoverDim(county) {
+        var chart = countyTrendState.chart;
+        if (!chart) return;
+
+        chart.data.datasets.forEach(function (ds) {
+          if (countyTrendState.visible[ds.county] === false) return;
+          if (ds.county === county) {
+            ds.borderColor = countyTrendState.colors[ds.county];
+            ds.borderWidth = 3.5;
+            ds.backgroundColor = countyTrendState.colors[ds.county] + "33";
+          } else {
+            ds.borderColor = countyTrendState.colors[ds.county] + "2E";
+            ds.borderWidth = 1.5;
+            ds.backgroundColor = countyTrendState.colors[ds.county] + "0D";
+          }
+        });
+        chart.update("none");
+
+        var chips = document.querySelectorAll("#countyTrendToggles .trend-chip");
+        chips.forEach(function (chip) {
+          chip.classList.toggle(
+            "trend-chip-focus",
+            chip.getAttribute("data-county") === county
+          );
+        });
+      }
+
+      function clearHoverDim() {
+        var chart = countyTrendState.chart;
+        if (!chart) return;
+
+        chart.data.datasets.forEach(function (ds) {
+          if (countyTrendState.visible[ds.county] === false) return;
+          ds.borderColor = countyTrendState.colors[ds.county];
+          ds.borderWidth = 2;
+          ds.backgroundColor = countyTrendState.colors[ds.county] + "22";
+        });
+        chart.update("none");
+
+        var chips = document.querySelectorAll("#countyTrendToggles .trend-chip");
+        chips.forEach(function (chip) {
+          chip.classList.remove("trend-chip-focus");
+        });
+      }
+
+      // Render (or refresh) the combined per-county risk trend chart.
+      function renderCountyTrend(data) {
+        countyTrendState.labels = data.labels || [];
+        countyTrendState.series = data.series || [];
+
+        countyTrendState.series.forEach(function (s, i) {
+          countyTrendState.colors[s.county] =
+            countyTrendPalette[i % countyTrendPalette.length];
+          if (countyTrendState.visible[s.county] === undefined) {
+            countyTrendState.visible[s.county] = true;
+          }
+        });
+
+        buildTrendToggles();
+
+        if (!countyTrendState.chart) {
+          buildCombinedChart();
+        } else {
+          countyTrendState.chart.data.labels = countyTrendState.labels;
+          countyTrendState.chart.data.datasets = buildTrendDatasets();
+        }
+        applyTrendView();
       }
     </script>
   </body>

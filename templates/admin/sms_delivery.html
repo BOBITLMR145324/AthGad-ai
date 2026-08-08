@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Realtime SMS Delivery - Admin Workspace</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body class="bg-slate-950 text-slate-100 min-h-screen">
+    <!-- Admin Header -->
+    <header
+      class="border-b border-slate-800 bg-slate-950 sticky top-0 z-50 px-6 py-4"
+    >
+      <div class="max-w-7xl mx-auto flex justify-between items-center">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 flex-shrink-0 flex items-center justify-center">
+            {% include '_logo.html' %}
+          </div>
+          <div>
+            <h1
+              class="text-lg font-black tracking-wider text-emerald-400 uppercase leading-tight"
+            >
+              Admin Workspace
+            </h1>
+            <p class="text-[10px] text-slate-400">
+              AthGad AI • Realtime SMS Delivery Console
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-slate-400">
+            Welcome, <strong class="text-emerald-400">{{ admin_name }}</strong>
+          </span>
+          <a
+            href="/dashboard"
+            class="border border-slate-700 hover:bg-slate-900 text-slate-300 px-3 py-1.5 rounded-lg text-xs transition no-underline"
+            >Citizen Dashboard</a
+          >
+          <a
+            href="/logout"
+            class="border border-slate-700 hover:border-rose-500 text-slate-400 hover:text-rose-400 px-3 py-1.5 rounded-lg text-xs transition no-underline"
+            >Sign Out</a
+          >
+        </div>
+      </div>
+    </header>
+
+    <!-- Admin Nav Tabs -->
+    <nav class="max-w-7xl mx-auto px-6 pt-6 flex gap-3 flex-wrap">
+      <a
+        href="/admin"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Overview</a
+      >
+      <a
+        href="/admin/reports"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >PDF Reports</a
+      >
+      <a
+        href="/admin/sms-delivery"
+        class="bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Realtime SMS Delivery</a
+      >
+      <a
+        href="/admin/analytics"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >System Analytics</a
+      >
+      <a
+        href="/admin/users"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Users</a
+      >
+      <a
+        href="/profile"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >My Profile</a
+      >
+    </nav>
+
+    <!-- Flash Messages -->
+    <div class="max-w-7xl mx-auto px-6 pt-4">
+      {% with messages = get_flashed_messages(with_categories=true) %} {% for
+      category, message in messages %}
+      <div
+        class="p-3 rounded-lg text-xs font-medium mb-3 {% if category == 'error' %}bg-red-950/40 border border-red-800 text-red-200 {% else %}bg-emerald-950/40 border border-emerald-800 text-emerald-200{% endif %}"
+      >
+        {{ message }}
+      </div>
+      {% endfor %} {% endwith %}
+    </div>
+
+    <main class="max-w-7xl mx-auto px-6 py-8 space-y-6">
+      <!-- Page Hero -->
+      <div
+        class="bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-8"
+      >
+        <h2 class="text-2xl font-black text-white">
+          Realtime SMS &amp; Email Dispatch Console
+        </h2>
+        <p class="text-slate-400 text-sm mt-1 leading-relaxed">
+          Every outbound SMS/email attempt is streamed to the database the moment
+          it happens. This console auto-refreshes so you can debug delivery
+          issues live — status, Africa's Talking response, cost, message id, and
+          error detail — without touching the server logs. The same data is
+          downloadable from
+          <a
+            href="/admin/reports"
+            class="text-emerald-300 underline no-underline hover:text-emerald-200"
+            >PDF Reports</a
+          >.
+        </p>
+        <div class="flex items-center gap-2 mt-4">
+          <span class="relative flex h-2.5 w-2.5">
+            <span
+              class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
+            ></span>
+            <span
+              class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"
+            ></span>
+          </span>
+          <span class="text-xs text-emerald-300 font-semibold" id="live-status"
+            >Live — auto-refreshing every 5s</span
+          >
+          <span class="text-[10px] text-slate-500 ml-auto" id="refresh-stamp"
+            ></span>
+        </div>
+      </div>
+
+      <!-- Live Summary Cards -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 text-center">
+          <p class="text-2xl font-black text-white" id="sum-total">—</p>
+          <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+            Tracked Dispatches
+          </p>
+        </div>
+        <div class="bg-slate-900 border border-emerald-800/60 rounded-xl p-4 text-center">
+          <p class="text-2xl font-black text-emerald-400" id="sum-sms">—</p>
+          <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+            SMS
+          </p>
+        </div>
+        <div class="bg-slate-900 border border-sky-800/60 rounded-xl p-4 text-center">
+          <p class="text-2xl font-black text-sky-400" id="sum-email">—</p>
+          <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+            Email
+          </p>
+        </div>
+        <div class="bg-slate-900 border border-rose-800/60 rounded-xl p-4 text-center">
+          <p class="text-2xl font-black text-rose-400" id="sum-failed">—</p>
+          <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+            Failed
+          </p>
+        </div>
+        <div class="bg-slate-900 border border-amber-800/60 rounded-xl p-4 text-center">
+          <p class="text-2xl font-black text-amber-400" id="sum-simulated">—</p>
+          <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+            Simulated
+          </p>
+        </div>
+      </div>
+
+      <!-- View Tabs -->
+      <div class="flex items-center gap-3">
+        <button
+          type="button"
+          id="tab-sms"
+          onclick="switchView('sms')"
+          class="cursor-pointer bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >
+          SMS Delivery Logs
+        </button>
+        <button
+          type="button"
+          id="tab-dispatch"
+          onclick="switchView('dispatch')"
+          class="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >
+          Alert Dispatches (SMS + Email)
+        </button>
+      </div>
+
+      <!-- Status Filter Chips -->
+      <div
+        class="flex flex-wrap items-center gap-2"
+        id="filter-bar"
+      >
+        <span class="text-[10px] text-slate-500 uppercase tracking-wider mr-1"
+          >Filter:</span
+        >
+        <button
+          type="button"
+          data-status=""
+          onclick="setStatusFilter(this)"
+          class="status-chip cursor-pointer bg-emerald-600 text-white font-bold px-3 py-1 rounded-full text-[11px] transition"
+        >
+          All
+        </button>
+        <button
+          type="button"
+          data-status="SUCCESS"
+          onclick="setStatusFilter(this)"
+          class="status-chip cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-full text-[11px] transition"
+        >
+          Success
+        </button>
+        <button
+          type="button"
+          data-status="FAILED"
+          onclick="setStatusFilter(this)"
+          class="status-chip cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-full text-[11px] transition"
+        >
+          Failed
+        </button>
+        <button
+          type="button"
+          data-status="SIMULATED"
+          onclick="setStatusFilter(this)"
+          class="status-chip cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-full text-[11px] transition"
+        >
+          Simulated
+        </button>
+      </div>
+
+      <!-- SMS Delivery Logs Table -->
+      <div
+        id="view-sms"
+        class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden"
+      >
+        <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+          <h3 class="text-sm font-bold text-emerald-300 uppercase tracking-wider">
+            SMS Delivery Attempts (Africa's Talking)
+          </h3>
+          <a
+            href="/admin/reports/alert_dispatch_logs/pdf"
+            class="text-[11px] text-emerald-300 hover:text-emerald-200 font-semibold no-underline"
+            >Download full report ↓</a
+          >
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead>
+              <tr class="text-slate-400 border-b border-slate-800">
+                <th class="px-4 py-3 font-semibold">Time</th>
+                <th class="px-4 py-3 font-semibold">Phone</th>
+                <th class="px-4 py-3 font-semibold">Name</th>
+                <th class="px-4 py-3 font-semibold">Type</th>
+                <th class="px-4 py-3 font-semibold">Tier</th>
+                <th class="px-4 py-3 font-semibold">Status</th>
+                <th class="px-4 py-3 font-semibold">AT Status</th>
+                <th class="px-4 py-3 font-semibold">HTTP</th>
+                <th class="px-4 py-3 font-semibold">Cost</th>
+                <th class="px-4 py-3 font-semibold">Msg ID</th>
+                <th class="px-4 py-3 font-semibold">Error Detail</th>
+              </tr>
+            </thead>
+            <tbody id="sms-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Alert Dispatch Logs Table -->
+      <div
+        id="view-dispatch"
+        class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden hidden"
+      >
+        <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+          <h3 class="text-sm font-bold text-emerald-300 uppercase tracking-wider">
+            Tracked Alert Dispatches (SMS + Email)
+          </h3>
+          <a
+            href="/admin/reports/alert_dispatch_logs/pdf"
+            class="text-[11px] text-emerald-300 hover:text-emerald-200 font-semibold no-underline"
+            >Download full report ↓</a
+          >
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead>
+              <tr class="text-slate-400 border-b border-slate-800">
+                <th class="px-4 py-3 font-semibold">Time</th>
+                <th class="px-4 py-3 font-semibold">Channel</th>
+                <th class="px-4 py-3 font-semibold">Recipient</th>
+                <th class="px-4 py-3 font-semibold">Type</th>
+                <th class="px-4 py-3 font-semibold">Subscription</th>
+                <th class="px-4 py-3 font-semibold">Status</th>
+                <th class="px-4 py-3 font-semibold">Message</th>
+              </tr>
+            </thead>
+            <tbody id="dispatch-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <style>
+      .status-chip {
+        border: 1px solid #334155;
+      }
+      .status-chip.status-chip-active {
+        background: #10b981;
+        color: #04251c;
+        border-color: #10b981;
+      }
+      .status-chip:hover {
+        border-color: #10b981;
+        color: #ffffff;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .badge-success {
+        background: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+      }
+      .badge-failed {
+        background: rgba(244, 63, 94, 0.15);
+        color: #fb7185;
+      }
+      .badge-simulated {
+        background: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+      }
+      .badge-unknown {
+        background: rgba(100, 116, 139, 0.15);
+        color: #94a3b8;
+      }
+      .msg-cell {
+        max-width: 320px;
+        white-space: normal;
+        word-break: break-word;
+        color: #94a3b8;
+        line-height: 1.5;
+      }
+    </style>
+
+    <script>
+      var viewState = {
+        current: "sms",
+        statusFilter: "",
+      };
+
+      // Status badge styling for the SMS table.
+      function statusBadge(status) {
+        var s = (status || "unknown").toUpperCase();
+        var cls = "badge-unknown";
+        if (s === "SUCCESS") cls = "badge-success";
+        else if (s === "FAILED") cls = "badge-failed";
+        else if (s === "SIMULATED") cls = "badge-simulated";
+        return (
+          '<span class="badge ' +
+          cls +
+          '">' +
+          s.toLowerCase() +
+          "</span>"
+        );
+      }
+
+      function channelBadge(channel) {
+        var c = (channel || "sms").toLowerCase();
+        var cls = c === "email" ? "badge badge-success" : "badge badge-unknown";
+        return '<span class="' + cls + '">' + c + "</span>";
+      }
+
+      function esc(v) {
+        var s = String(v == null ? "" : v);
+        return s
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function switchView(name) {
+        viewState.current = name;
+        document
+          .getElementById("view-sms")
+          .classList.toggle("hidden", name !== "sms");
+        document
+          .getElementById("view-dispatch")
+          .classList.toggle("hidden", name !== "dispatch");
+        var smsTab = document.getElementById("tab-sms");
+        var dispTab = document.getElementById("tab-dispatch");
+        if (name === "sms") {
+          smsTab.className =
+            "cursor-pointer bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline";
+          dispTab.className =
+            "cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline";
+        } else {
+          dispTab.className =
+            "cursor-pointer bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline";
+          smsTab.className =
+            "cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline";
+        }
+        loadData();
+      }
+
+      function setStatusFilter(btn) {
+        viewState.statusFilter = btn.getAttribute("data-status") || "";
+        var chips = document.querySelectorAll(".status-chip");
+        chips.forEach(function (c) {
+          c.classList.toggle(
+            "status-chip-active",
+            (c.getAttribute("data-status") || "") === viewState.statusFilter
+          );
+        });
+        loadData();
+      }
+
+      function setSummary(s) {
+        var set = function (id, v) {
+          var el = document.getElementById(id);
+          if (el) el.textContent = v;
+        };
+        set("sum-total", s.total);
+        set("sum-sms", s.sms);
+        set("sum-email", s.email);
+        set("sum-failed", s.failed);
+        set("sum-simulated", s.simulated);
+      }
+
+      function renderSms(logs) {
+        var body = document.getElementById("sms-table-body");
+        if (!logs.length) {
+          body.innerHTML =
+            '<tr><td colspan="11" class="px-4 py-8 text-center text-slate-500">No SMS deliveries matched yet.</td></tr>';
+          return;
+        }
+        body.innerHTML = logs
+          .map(function (l) {
+            return (
+              "<tr class='border-b border-slate-800/60 hover:bg-slate-800/40'>" +
+              "<td class='px-4 py-2.5 text-slate-400 whitespace-nowrap'>" +
+              esc(l.logged_at) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-200 whitespace-nowrap'>" +
+              esc(l.phone_number) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-300'>" +
+              esc(l.name) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
+              esc(l.message_type) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
+              esc(l.tier) +
+              "</td>" +
+              "<td class='px-4 py-2.5'>" +
+              statusBadge(l.status) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
+              esc(l.at_status) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
+              esc(l.http_status || "—") +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
+              esc(l.cost) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
+              esc(l.message_id) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-rose-300/80 msg-cell'>" +
+              esc(l.error_detail) +
+              "</td>" +
+              "</tr>"
+            );
+          })
+          .join("");
+      }
+
+      function renderDispatch(logs) {
+        var body = document.getElementById("dispatch-table-body");
+        if (!logs.length) {
+          body.innerHTML =
+            '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No tracked dispatches matched yet.</td></tr>';
+          return;
+        }
+        body.innerHTML = logs
+          .map(function (l) {
+            return (
+              "<tr class='border-b border-slate-800/60 hover:bg-slate-800/40'>" +
+              "<td class='px-4 py-2.5 text-slate-400 whitespace-nowrap'>" +
+              esc(l.dispatched_at) +
+              "</td>" +
+              "<td class='px-4 py-2.5'>" +
+              channelBadge(l.channel) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-200 whitespace-nowrap'>" +
+              esc(l.recipient) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
+              esc(l.message_type) +
+              "</td>" +
+              "<td class='px-4 py-2.5 text-slate-400'>" +
+              esc(l.subscription_status) +
+              "</td>" +
+              "<td class='px-4 py-2.5'>" +
+              statusBadge(l.status) +
+              "</td>" +
+              "<td class='px-4 py-2.5 msg-cell'>" +
+              esc(l.message) +
+              "</td>" +
+              "</tr>"
+            );
+          })
+          .join("");
+      }
+
+      function loadData() {
+        var stamp = document.getElementById("refresh-stamp");
+        if (stamp) stamp.textContent = "Refreshing…";
+
+        var smsUrl = "/api/v1/admin/sms-delivery?limit=200";
+        var dispatchUrl =
+          "/api/v1/admin/dispatch-logs?limit=500&status=" +
+          encodeURIComponent(viewState.statusFilter || "ALL") +
+          "&channel=all";
+
+        Promise.all([
+          fetch(smsUrl).then(function (r) {
+            return r.json();
+          }),
+          fetch(dispatchUrl).then(function (r) {
+            return r.json();
+          }),
+        ])
+          .then(function (results) {
+            var sms = results[0];
+            var dispatch = results[1];
+            if (sms.status === "ok") {
+              renderSms(sms.logs);
+              if (stamp) stamp.textContent = "Updated " + sms.last_sync;
+            }
+            if (dispatch.status === "ok") {
+              setSummary(dispatch.summary);
+              renderDispatch(dispatch.logs);
+            }
+          })
+          .catch(function () {
+            if (stamp) stamp.textContent = "Refresh failed — retrying…";
+          });
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        loadData();
+        setInterval(loadData, 5000);
+      });
+    </script>
+  </body>
+</html>

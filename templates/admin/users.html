@@ -55,6 +55,11 @@
         >PDF Reports</a
       >
       <a
+        href="/admin/sms-delivery"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Realtime SMS Delivery</a
+      >
+      <a
         href="/admin/analytics"
         class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
         >System Analytics</a
@@ -63,6 +68,11 @@
         href="/admin/users"
         class="bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
         >Users</a
+      >
+      <a
+        href="/profile"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >My Profile</a
       >
     </nav>
 
@@ -121,7 +131,7 @@
               {% for user in users %}
               <tr class="border-b border-slate-800/60">
                 <td class="py-3 px-6 font-mono text-slate-500">
-                  {{ user.id }}
+                  {{ user.user_code }}
                 </td>
                 <td class="py-3 px-6 font-bold text-white">
                   {{ user.full_name }}
@@ -147,7 +157,7 @@
                 </td>
                 <td class="py-3 px-6">
                   {% if user.role == 'admin' %}
-                  <form method="POST" action="/admin/users/{{ user.id }}/demote">
+                  <form method="POST" action="/admin/users/{{ user.user_code }}/demote">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <button
                       type="submit"
@@ -157,7 +167,7 @@
                     </button>
                   </form>
                   {% else %}
-                  <form method="POST" action="/admin/users/{{ user.id }}/promote">
+                  <form method="POST" action="/admin/users/{{ user.user_code }}/promote">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <button
                       type="submit"

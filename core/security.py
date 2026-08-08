@@ -174,7 +174,7 @@ def apply_security_headers(response):
     # Content Security Policy (allow inline styles/scripts for local CSS + charts)
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "font-src 'self' data: https://fonts.googleapis.com https://fonts.gstatic.com; "

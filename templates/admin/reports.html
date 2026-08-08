@@ -55,6 +55,11 @@
         >PDF Reports</a
       >
       <a
+        href="/admin/sms-delivery"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Realtime SMS Delivery</a
+      >
+      <a
         href="/admin/analytics"
         class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
         >System Analytics</a
@@ -63,6 +68,11 @@
         href="/admin/users"
         class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
         >Users</a
+      >
+      <a
+        href="/profile"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >My Profile</a
       >
     </nav>
 
@@ -85,8 +95,93 @@
       >
         <h2 class="text-2xl font-black text-white">PDF Report Generation</h2>
         <p class="text-slate-400 text-sm mt-1">
-          Generate print-ready PDF reports generated live from the AthGad AI
-          system. Data reflects the current state at the moment of download.
+          Reports are generated <strong class="text-emerald-300">live</strong> from
+          the AthGad AI system on every download — never cached or static. Any
+          user who subscribes is automatically included in the next report.
+        </p>
+      </div>
+
+      <!-- Live Report Snapshot (auto-refreshing) -->
+      <div class="bg-slate-900 border border-emerald-500/30 rounded-2xl p-6">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-2">
+            <span class="relative flex h-2.5 w-2.5">
+              <span
+                class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
+              ></span>
+              <span
+                class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"
+              ></span>
+            </span>
+            <h3
+              class="text-sm font-bold text-emerald-300 uppercase tracking-wider"
+            >
+              Live System Snapshot
+            </h3>
+          </div>
+          <span id="snapshot-updated" class="text-[10px] text-slate-500"></span>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
+          <div
+            class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
+          >
+            <p class="text-2xl font-black text-white" id="snap-total-users">—</p>
+            <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+              Total Users
+            </p>
+          </div>
+          <div
+            class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
+          >
+            <p class="text-2xl font-black text-emerald-400" id="snap-subscribed">—</p>
+            <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+              Subscribed
+            </p>
+          </div>
+          <div
+            class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
+          >
+            <p class="text-2xl font-black text-rose-400" id="snap-unsubscribed">—</p>
+            <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+              Unsubscribed
+            </p>
+          </div>
+          <div
+            class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
+          >
+            <p class="text-2xl font-black text-white" id="snap-predictions">—</p>
+            <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+              Counties with Predictions
+            </p>
+          </div>
+          <div
+            class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
+          >
+            <p class="text-2xl font-black text-amber-400" id="snap-high-risk">—</p>
+            <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+              High-Risk Counties
+            </p>
+          </div>
+          <div
+            class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
+          >
+            <p class="text-2xl font-black text-sky-400" id="snap-dispatch">—</p>
+            <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+              Dispatches Sent
+            </p>
+          </div>
+          <div
+            class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
+          >
+            <p class="text-2xl font-black text-rose-400" id="snap-dispatch-failed">—</p>
+            <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
+              Dispatches Failed
+            </p>
+          </div>
+        </div>
+        <p class="text-[10px] text-slate-500 mt-4">
+          Auto-refreshes every 30 seconds. PDF downloads query this same live
+          data at the moment of download, so the reports are always up to date.
         </p>
       </div>
 
@@ -158,8 +253,9 @@
           <div>
             <h3 class="text-lg font-bold text-white">Subscribed Members</h3>
             <p class="text-xs text-slate-400 mt-1 leading-relaxed">
-              All currently subscribed members showing only their names and
-              their subscription date &amp; time.
+              All currently subscribed members with their names, email addresses,
+              and subscription date &amp; time. Updated live — newly subscribing
+              users appear on the next download.
             </p>
           </div>
           <a
@@ -194,7 +290,69 @@
             📄 Download PDF
           </a>
         </div>
+
+        <!-- Report 5: Alert Dispatch Logs -->
+        <div
+          class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4"
+        >
+          <div
+            class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 text-lg"
+          >
+            📨
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-white">Alert Dispatch Logs</h3>
+            <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+              Every tracked SMS/email dispatch — the recipient (phone number or
+              email), the exact message that was sent, the subscription status
+              at dispatch time, and the delivery result. Updated live on every
+              download.
+            </p>
+          </div>
+          <a
+            href="/admin/reports/alert_dispatch_logs/pdf"
+            class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
+          >
+            📄 Download PDF
+          </a>
+        </div>
       </div>
+
     </main>
+
+    <script>
+      // Live report snapshot: pull fresh counts and auto-refresh every 30s.
+      function loadReportSnapshot() {
+        fetch("/api/v1/admin/report-snapshot")
+          .then(function (res) {
+            return res.json();
+          })
+          .then(function (data) {
+            if (data.status !== "ok") return;
+            var s = data.snapshot;
+            var set = function (id, v) {
+              var el = document.getElementById(id);
+              if (el) el.textContent = v;
+            };
+            set("snap-total-users", s.total_users);
+            set("snap-subscribed", s.subscribed_count);
+            set("snap-unsubscribed", s.unsubscribed_count);
+            set("snap-predictions", s.prediction_counties + " / 8");
+            set("snap-high-risk", s.high_risk_counties);
+            set("snap-dispatch", s.dispatch_count);
+            set("snap-dispatch-failed", s.dispatch_failed_count);
+            var upd = document.getElementById("snapshot-updated");
+            if (upd) upd.textContent = "Updated " + s.generated_at;
+          })
+          .catch(function () {
+            var upd = document.getElementById("snapshot-updated");
+            if (upd) upd.textContent = "Snapshot unavailable";
+          });
+      }
+      document.addEventListener("DOMContentLoaded", function () {
+        loadReportSnapshot();
+        setInterval(loadReportSnapshot, 30000);
+      });
+    </script>
   </body>
 </html>

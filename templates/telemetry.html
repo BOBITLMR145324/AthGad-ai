@@ -124,7 +124,9 @@
             <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
             Detected Threats & Expected Risks
           </h2>
-          <span class="text-xs text-slate-500">Updated: {{ last_sync }}</span>
+          <span class="text-xs text-slate-500" id="last-sync"
+            >Updated: {{ last_sync }}</span
+          >
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -143,7 +145,7 @@
                   Lack of Rain Across Seasons
                 </h3>
               </div>
-              <span class="text-2xl font-black text-amber-400"
+              <span class="text-2xl font-black text-amber-400" id="avg-climate"
                 >{{ avg_climate }}%</span
               >
             </div>
@@ -186,7 +188,7 @@
                   Waterborne Diseases & Pest Surge
                 </h3>
               </div>
-              <span class="text-2xl font-black text-rose-400"
+              <span class="text-2xl font-black text-rose-400" id="avg-health"
                 >{{ avg_health }}%</span
               >
             </div>
@@ -369,6 +371,7 @@
     <!-- Filter Script -->
     <script>
       // Set the dynamic risk bar width from the data-score attribute
+      var activeFilter = "all";
       function applyBarWidths() {
         document.querySelectorAll("[data-score]").forEach(function (bar) {
           var score = bar.getAttribute("data-score");
@@ -382,6 +385,12 @@
       // Refresh the live telemetry data for all counties (no login required).
       function refreshTelemetry() {
         var statusEl = document.getElementById("refresh-status");
+        var btn = document.getElementById("btn-refresh");
+        var originalHtml = btn ? btn.innerHTML : "";
+        if (btn) {
+          btn.disabled = true;
+          btn.classList.add("opacity-50", "cursor-not-allowed");
+        }
         if (statusEl) statusEl.textContent = "Refreshing...";
 
         fetch("/api/v1/telemetry/refresh")
@@ -402,30 +411,25 @@
                 data.high_risk_count + " Counties at High Risk";
             }
 
-            // Update climate & health average cards.
-            var climateSpan = document.querySelector(
-              ".to-amber-950\\/30 .text-2xl",
-            );
-            var healthSpan = document.querySelector(
-              ".to-rose-950\\/30 .text-2xl",
-            );
+            // Update climate & health average cards (stable IDs).
+            var climateSpan = document.getElementById("avg-climate");
+            var healthSpan = document.getElementById("avg-health");
             if (climateSpan) climateSpan.textContent = data.avg_climate + "%";
             if (healthSpan) healthSpan.textContent = data.avg_health + "%";
 
-            // Update the "Updated:" timestamps.
-            document
-              .querySelectorAll('span[class*="text-xs text-slate-500"]')
-              .forEach(function (el) {
-                if (el.textContent.indexOf("Updated:") === 0) {
-                  el.textContent = "Updated: " + data.last_sync;
-                }
-              });
+            // Update the "Updated:" timestamp.
+            var lastSync = document.getElementById("last-sync");
+            if (lastSync) lastSync.textContent = "Updated: " + data.last_sync;
 
             // Rebuild the county grid from the fresh status board.
             var grid = document.getElementById("county-grid");
             if (grid && data.status_board) {
               grid.innerHTML = buildCountyCards(data.status_board);
               applyBarWidths();
+              // Preserve the currently selected filter across the rebuild.
+              if (activeFilter && activeFilter !== "all") {
+                filterCounties(activeFilter);
+              }
             }
 
             if (statusEl) statusEl.textContent = "Updated " + data.last_sync;
@@ -433,6 +437,13 @@
           .catch(function () {
             if (statusEl)
               statusEl.textContent = "Refresh failed. Please try again.";
+          })
+          .finally(function () {
+            if (btn) {
+              btn.disabled = false;
+              btn.classList.remove("opacity-50", "cursor-not-allowed");
+              btn.innerHTML = originalHtml;
+            }
           });
       }
 
@@ -506,6 +517,7 @@
       }
 
       function filterCounties(type) {
+        activeFilter = type;
         const cards = document.querySelectorAll(".county-card");
         const buttons = document.querySelectorAll(".filter-btn");
 

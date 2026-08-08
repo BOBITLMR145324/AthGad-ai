@@ -7,6 +7,11 @@ try:
 except ModuleNotFoundError:
     from core.db_helper import get_db_engine
 from sqlalchemy import text
+from core.id_codes import (
+    new_climate_code,
+    new_health_code,
+    new_space_weather_code,
+)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -49,6 +54,9 @@ class AthGadDataProcessor:
             print("Processor: No climate rows to store after cleaning.")
             return
 
+        # Assign a human-readable, domain-specific primary key per row
+        df['climate_code'] = [new_climate_code(ts) for ts in df['timestamp']]
+
         # Append structured alphanumeric columns using Pandas to_sql
         if not self._to_sql(df, 'climate_records'):
             return
@@ -78,6 +86,9 @@ class AthGadDataProcessor:
         if df.empty:
             return
 
+        # Assign a human-readable, domain-specific primary key per row
+        df['space_weather_code'] = [new_space_weather_code(ts) for ts in df['timestamp']]
+
         # Stream directly to database table using SQLAlchemy connection pool
         if not self._to_sql(df, 'space_weather_records'):
             return
@@ -103,6 +114,13 @@ class AthGadDataProcessor:
 
         if df.empty:
             return
+
+        # Assign a human-readable, domain-specific primary key per row that
+        # encodes the county, disease and observation date.
+        df['health_code'] = [
+            new_health_code(county, disease, ts)
+            for county, disease, ts in zip(df['county'], df['disease_type'], df['timestamp'])
+        ]
 
         if not self._to_sql(df, 'health_records'):
             return

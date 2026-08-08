@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>System Analytics - Admin Workspace</title>
     <link rel="stylesheet" href="/static/css/style.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/js/chart.umd.min.js"></script>
   </head>
   <body class="bg-slate-950 text-slate-100 min-h-screen">
     <!-- Admin Header -->
@@ -69,6 +69,11 @@
         >PDF Reports</a
       >
       <a
+        href="/admin/sms-delivery"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >Realtime SMS Delivery</a
+      >
+      <a
         href="/admin/analytics"
         class="bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
         >System Analytics</a
@@ -77,6 +82,11 @@
         href="/admin/users"
         class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
         >Users</a
+      >
+      <a
+        href="/profile"
+        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
+        >My Profile</a
       >
     </nav>
 
@@ -106,7 +116,7 @@
           >
             Total Users
           </h3>
-          <p class="text-3xl font-black text-white mt-3">
+          <p class="text-3xl font-black text-white mt-3" id="kpi-total-users">
             {{ analytics.total_users }}
           </p>
         </div>
@@ -116,7 +126,7 @@
           >
             Subscribed
           </h3>
-          <p class="text-3xl font-black text-emerald-400 mt-3">
+          <p class="text-3xl font-black text-emerald-400 mt-3" id="kpi-subscribed">
             {{ analytics.subscribed_count }}
           </p>
         </div>
@@ -126,7 +136,7 @@
           >
             Unsubscribed
           </h3>
-          <p class="text-3xl font-black text-rose-400 mt-3">
+          <p class="text-3xl font-black text-rose-400 mt-3" id="kpi-unsubscribed">
             {{ analytics.unsubscribed_count }}
           </p>
         </div>
@@ -136,7 +146,7 @@
           >
             Risk Alerts Logged
           </h3>
-          <p class="text-3xl font-black text-amber-400 mt-3">
+          <p class="text-3xl font-black text-amber-400 mt-3" id="kpi-alert-count">
             {{ analytics.alert_count }}
           </p>
         </div>
@@ -157,10 +167,17 @@
             >
           </div>
           <div class="h-72">
+            <div
+              id="pie-chart-unavailable"
+              class="hidden h-full flex items-center justify-center text-xs text-rose-300"
+            >
+              Chart could not load — Chart.js (CDN) is unreachable. The
+              distribution counts below are still live.
+            </div>
             <canvas
               id="riskPieChart"
-              data-risk-dist="{{ analytics.risk_distribution | tojson }}"
-              data-risk-pct="{{ analytics.risk_distribution_pct | tojson }}"
+              data-risk-dist='{{ analytics.risk_distribution | tojson }}'
+              data-risk-pct='{{ analytics.risk_distribution_pct | tojson }}'
             ></canvas>
           </div>
           <!-- Dynamic summary panel -->
@@ -264,11 +281,16 @@
         <!-- County risk bar chart -->
         <div class="bg-slate-950 border border-slate-800 rounded-2xl p-8">
           <div class="flex items-center justify-between mb-6">
-            <h3
-              class="text-emerald-400 text-xs font-bold uppercase tracking-wider"
-            >
-              Predicted Risks by County
-            </h3>
+            <div>
+              <h3
+                class="text-emerald-400 text-xs font-bold uppercase tracking-wider"
+              >
+                Predicted Risks by County
+              </h3>
+              <p id="chart-live-status" class="text-[10px] text-slate-500 mt-1">
+                Live • latest system output rendered — updated on every refresh
+              </p>
+            </div>
             <button
               id="btn-refresh"
               onclick="refreshAnalytics()"
@@ -291,9 +313,16 @@
             </button>
           </div>
           <div class="h-72">
+            <div
+              id="chart-unavailable"
+              class="hidden h-full flex items-center justify-center text-xs text-rose-300"
+            >
+              Charts could not load — Chart.js (CDN) is unreachable. The numeric
+              tables and panel below still show the latest live data.
+            </div>
             <canvas
               id="countyBarChart"
-              data-status-board="{{ analytics.status_board | tojson }}"
+              data-status-board='{{ analytics.status_board | tojson }}'
             ></canvas>
           </div>
           <!-- Dynamic per-county forecast detail list -->
@@ -347,7 +376,7 @@
                 <th class="py-3 px-6">Risk Level</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="county-table-body">
               {% for item in analytics.status_board %}
               <tr class="border-b border-slate-800/60">
                 <td class="py-3 px-6 font-bold text-white">
@@ -373,241 +402,387 @@
 
     <!-- Chart.js rendering -->
     <script>
-      // Read the JSON payloads from data-* attributes (kept out of the JS
-      // body so the HTML/JS editors don't flag the Jinja template tags).
-      const pieCanvas = document.getElementById("riskPieChart");
-      const barCanvas = document.getElementById("countyBarChart");
-      let riskDist = { Low: 0, Medium: 0, High: 0 };
-      let statusBoard = [];
+      (function () {
+        // Chart.js availability guard — charts render only when the library
+        // loads; the numeric panel, tables and trend list always render.
+        var chartLibAvailable = typeof window.Chart !== "undefined";
 
-      if (pieCanvas && pieCanvas.dataset.riskDist) {
+        // Read the server-injected payloads from data-* attributes so every
+        // widget is visible immediately on first paint (before any fetch).
+        var pieCanvas = document.getElementById("riskPieChart");
+        var barCanvas = document.getElementById("countyBarChart");
+        var initial = {
+          status_board: [],
+          risk_distribution: null,
+          risk_distribution_pct: null,
+        };
         try {
-          riskDist = JSON.parse(pieCanvas.dataset.riskDist);
+          initial.status_board = JSON.parse(barCanvas.dataset.statusBoard);
         } catch (e) {
-          riskDist = { Low: 0, Medium: 0, High: 0 };
+          initial.status_board = [];
         }
-      }
-      if (barCanvas && barCanvas.dataset.statusBoard) {
         try {
-          statusBoard = JSON.parse(barCanvas.dataset.statusBoard);
+          initial.risk_distribution = JSON.parse(pieCanvas.dataset.riskDist);
         } catch (e) {
-          statusBoard = [];
+          initial.risk_distribution = null;
         }
-      }
-
-      // Chart instances (so we can destroy/re-create on refresh).
-      let pieChartInstance = null;
-      let barChartInstance = null;
-
-      // Render (or re-render) the Risk Level Distribution doughnut chart.
-      function renderPieChart() {
-        const pieCtx = document.getElementById("riskPieChart");
-        if (!pieCtx) return;
-        if (pieChartInstance) pieChartInstance.destroy();
-        pieChartInstance = new Chart(pieCtx, {
-          type: "doughnut",
-          data: {
-            labels: ["Low", "Medium", "High"],
-            datasets: [
-              {
-                data: [riskDist.Low, riskDist.Medium, riskDist.High],
-                backgroundColor: ["#10b981", "#f59e0b", "#ef4444"],
-                borderColor: ["#064e3b", "#78350f", "#7f1d1d"],
-                borderWidth: 2,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { position: "bottom", labels: { color: "#94a3b8" } },
-            },
-          },
-        });
-      }
-
-      // Render (or re-render) the County Risk bar chart.
-      function renderBarChart() {
-        const barCtx = document.getElementById("countyBarChart");
-        if (!barCtx) return;
-        if (barChartInstance) barChartInstance.destroy();
-        const counties = statusBoard.map((c) => c.county);
-        const scores = statusBoard.map((c) => c.score_pct);
-        const colors = statusBoard.map((c) =>
-          c.risk_level === "High"
-            ? "#ef4444"
-            : c.risk_level === "Medium"
-              ? "#f59e0b"
-              : "#10b981",
-        );
-        barChartInstance = new Chart(barCtx, {
-          type: "bar",
-          data: {
-            labels: counties,
-            datasets: [
-              {
-                label: "Risk Score (%)",
-                data: scores,
-                backgroundColor: colors,
-                borderRadius: 6,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            indexAxis: "y",
-            scales: {
-              x: {
-                beginAtZero: true,
-                grid: { color: "#1e293b" },
-                ticks: { color: "#94a3b8" },
-              },
-              y: { grid: { display: false }, ticks: { color: "#94a3b8" } },
-            },
-            plugins: { legend: { display: false } },
-          },
-        });
-      }
-
-      // Rebuild the per-county trend list from the current status board.
-      function renderTrendList() {
-        const container = document.getElementById("trend-list");
-        if (!container) return;
-        container.innerHTML = statusBoard
-          .map(function (item) {
-            var trendClass =
-              item.trend === "rising"
-                ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
-                : item.trend === "falling"
-                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                  : "bg-amber-500/20 text-amber-300 border border-amber-500/30";
-            return (
-              '<div class="flex items-center justify-between text-xs py-1.5 border-b border-slate-800/40 last:border-0">' +
-              '<span class="text-slate-300 font-semibold">' +
-              item.county +
-              "</span>" +
-              '<span class="flex items-center gap-2">' +
-              '<span class="text-slate-500 max-w-[240px] truncate hidden md:inline">' +
-              (item.primary_threat || "") +
-              "</span>" +
-              '<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase ' +
-              trendClass +
-              '">' +
-              (item.trend || "stable") +
-              "</span>" +
-              "</span></div>"
-            );
-          })
-          .join("");
-      }
-
-      // Render the initial charts.
-      renderPieChart();
-      renderBarChart();
-      renderTrendList();
-
-      // Live refresh: pull fresh telemetry and re-render all dynamic content.
-      function refreshAnalytics() {
-        var btn = document.getElementById("btn-refresh");
-        var originalHtml = btn ? btn.innerHTML : "";
-        if (btn) {
-          btn.disabled = true;
-          btn.innerHTML = "Refreshing...";
+        try {
+          initial.risk_distribution_pct = JSON.parse(pieCanvas.dataset.riskPct);
+        } catch (e) {
+          initial.risk_distribution_pct = null;
         }
 
-        fetch("/api/v1/admin/telemetry/refresh")
-          .then(function (res) {
-            return res.json();
-          })
-          .then(function (data) {
-            if (data.status !== "ok") {
-              alert("Refresh failed. Please try again.");
-              return;
-            }
+        // Current analytics state (board + distribution) shared by every renderer.
+        var analytics = {
+          status_board: initial.status_board,
+          risk_distribution:
+            initial.risk_distribution ||
+            recomputeDistribution(initial.status_board),
+          risk_distribution_pct:
+            initial.risk_distribution_pct ||
+            computePct(
+              initial.risk_distribution ||
+                recomputeDistribution(initial.status_board),
+              initial.status_board.length,
+            ),
+        };
 
-            // Update the status board and recompute the risk distribution.
-            statusBoard = data.status_board || [];
-            riskDist = { Low: 0, Medium: 0, High: 0 };
-            statusBoard.forEach(function (c) {
-              riskDist[c.risk_level] = (riskDist[c.risk_level] || 0) + 1;
-            });
-            const totalDist = statusBoard.length || 1;
-            const pct = function (tier) {
-              return Math.round((riskDist[tier] / totalDist) * 1000) / 10;
-            };
+        // Chart instances (so we can destroy/re-create on refresh).
+        var pieChartInstance = null;
+        var barChartInstance = null;
 
-            // Re-render charts + trend list.
-            renderPieChart();
-            renderBarChart();
-            renderTrendList();
+        function defaultDistribution() {
+          return { Low: 0, Medium: 0, High: 0 };
+        }
 
-            // Update the dynamic summary panel values (risk distribution,
-            // overall risk index, highest-risk county, high-count).
-            function setText(id, val) {
-              var el = document.getElementById(id);
-              if (el) el.textContent = val;
-            }
-            setText("dist-low", riskDist.Low || 0);
-            setText("dist-low-pct", pct("Low"));
-            setText("dist-med", riskDist.Medium || 0);
-            setText("dist-med-pct", pct("Medium"));
-            setText("dist-high", riskDist.High || 0);
-            setText("dist-high-pct", pct("High"));
-
-            // Overall risk index = average score across counties.
-            var avgScore =
-              statusBoard.length > 0
-                ? Math.round(
-                    (statusBoard.reduce(function (s, c) {
-                      return s + (parseFloat(c.score_pct) || 0);
-                    }, 0) /
-                      statusBoard.length) *
-                      10,
-                  ) / 10
-                : 0;
-            setText("total-risk-index", avgScore);
-
-            // Highest-risk county + high county count.
-            var highCounty = "—";
-            var highScore = -1;
-            var highCount = 0;
-            statusBoard.forEach(function (c) {
-              if ((parseFloat(c.score_pct) || 0) > highScore) {
-                highScore = parseFloat(c.score_pct) || 0;
-                highCounty = c.county;
-              }
-              if (c.risk_level === "High") highCount += 1;
-            });
-            setText("highest-risk-county", highCounty);
-            setText("high-count", highCount);
-
-            // Update the "Last generated" label.
-            var genEl = document.getElementById("generated-at");
-            if (genEl) genEl.textContent = data.last_sync;
-          })
-          .catch(function () {
-            alert("Could not refresh analytics data. Please try again.");
-          })
-          .finally(function () {
-            if (btn) {
-              btn.disabled = false;
-              btn.innerHTML = originalHtml;
-            }
+        function recomputeDistribution(board) {
+          var d = defaultDistribution();
+          (board || []).forEach(function (c) {
+            if (d.hasOwnProperty(c.risk_level)) d[c.risk_level] += 1;
           });
-      }
+          return d;
+        }
 
-      // Fade out the welcome / flash message after 3 seconds.
-      var flashMessages = document.querySelectorAll(".flash-message");
-      flashMessages.forEach(function (msg) {
-        setTimeout(function () {
-          msg.classList.add("fading");
+        function computePct(dist, total) {
+          var t = total || dist.Low + dist.Medium + dist.High || 1;
+          return {
+            Low: Math.round((dist.Low / t) * 1000) / 10,
+            Medium: Math.round((dist.Medium / t) * 1000) / 10,
+            High: Math.round((dist.High / t) * 1000) / 10,
+          };
+        }
+
+        function setText(id, val) {
+          var el = document.getElementById(id);
+          if (
+            !el ||
+            val === undefined ||
+            val === null ||
+            val === "" ||
+            Number.isNaN(val)
+          ) {
+            return;
+          }
+          el.textContent = val;
+        }
+
+        function riskBadge(level) {
+          var cls =
+            level === "High"
+              ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+              : level === "Medium"
+                ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+          return (
+            '<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase ' +
+            cls +
+            '">' +
+            (level || "Low") +
+            "</span>"
+          );
+        }
+
+        // Render (or re-render) the Risk Level Distribution doughnut chart.
+        function renderPieChart() {
+          var pieCtx = document.getElementById("riskPieChart");
+          var fallback = document.getElementById("pie-chart-unavailable");
+          if (!chartLibAvailable || !pieCtx) {
+            if (fallback) fallback.classList.remove("hidden");
+            if (pieChartInstance) {
+              pieChartInstance.destroy();
+              pieChartInstance = null;
+            }
+            return;
+          }
+          if (fallback) fallback.classList.add("hidden");
+          if (pieChartInstance) pieChartInstance.destroy();
+          pieChartInstance = new Chart(pieCtx, {
+            type: "doughnut",
+            data: {
+              labels: ["Low", "Medium", "High"],
+              datasets: [
+                {
+                  data: [
+                    analytics.risk_distribution.Low,
+                    analytics.risk_distribution.Medium,
+                    analytics.risk_distribution.High,
+                  ],
+                  backgroundColor: ["#10b981", "#f59e0b", "#ef4444"],
+                  borderColor: ["#064e3b", "#78350f", "#7f1d1d"],
+                  borderWidth: 2,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { position: "bottom", labels: { color: "#94a3b8" } },
+              },
+            },
+          });
+        }
+
+        // Render (or re-render) the County Risk bar chart.
+        function renderBarChart() {
+          var barCtx = document.getElementById("countyBarChart");
+          var fallback = document.getElementById("chart-unavailable");
+          if (!chartLibAvailable || !barCtx) {
+            if (fallback) fallback.classList.remove("hidden");
+            if (barChartInstance) {
+              barChartInstance.destroy();
+              barChartInstance = null;
+            }
+            return;
+          }
+          if (fallback) fallback.classList.add("hidden");
+          if (barChartInstance) barChartInstance.destroy();
+          var counties = analytics.status_board.map(function (c) {
+            return c.county;
+          });
+          var scores = analytics.status_board.map(function (c) {
+            return c.score_pct;
+          });
+          var colors = analytics.status_board.map(function (c) {
+            return c.risk_level === "High"
+              ? "#ef4444"
+              : c.risk_level === "Medium"
+                ? "#f59e0b"
+                : "#10b981";
+          });
+          barChartInstance = new Chart(barCtx, {
+            type: "bar",
+            data: {
+              labels: counties,
+              datasets: [
+                {
+                  label: "Risk Score (%)",
+                  data: scores,
+                  backgroundColor: colors,
+                  borderRadius: 6,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              indexAxis: "y",
+              scales: {
+                x: {
+                  beginAtZero: true,
+                  grid: { color: "#1e293b" },
+                  ticks: { color: "#94a3b8" },
+                },
+                y: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+              },
+              plugins: { legend: { display: false } },
+            },
+          });
+        }
+
+        // Rebuild the per-county trend list from the current status board.
+        // No-op on an empty board so the server-rendered fallback is kept.
+        function renderTrendList() {
+          var container = document.getElementById("trend-list");
+          if (!container || !analytics.status_board.length) return;
+          container.innerHTML = analytics.status_board
+            .map(function (item) {
+              var trendClass =
+                item.trend === "rising"
+                  ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                  : item.trend === "falling"
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                    : "bg-amber-500/20 text-amber-300 border border-amber-500/30";
+              return (
+                '<div class="flex items-center justify-between text-xs py-1.5 border-b border-slate-800/40 last:border-0">' +
+                '<span class="text-slate-300 font-semibold">' +
+                item.county +
+                "</span>" +
+                '<span class="flex items-center gap-2">' +
+                '<span class="text-slate-500 max-w-[240px] truncate hidden md:inline">' +
+                (item.primary_threat || "") +
+                "</span>" +
+                '<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase ' +
+                trendClass +
+                '">' +
+                (item.trend || "stable") +
+                "</span>" +
+                "</span></div>"
+              );
+            })
+            .join("");
+        }
+
+        // Rebuild the "Predicted Risks" table from the live status board.
+        function renderTable() {
+          var tbody = document.getElementById("county-table-body");
+          if (!tbody || !analytics.status_board.length) return;
+          tbody.innerHTML = analytics.status_board
+            .map(function (item) {
+              return (
+                '<tr class="border-b border-slate-800/60">' +
+                '<td class="py-3 px-6 font-bold text-white">' +
+                item.county +
+                "</td>" +
+                '<td class="py-3 px-6 font-mono text-slate-300">' +
+                (item.score_pct || 0) +
+                "%</td>" +
+                '<td class="py-3 px-6">' +
+                riskBadge(item.risk_level) +
+                "</td></tr>"
+              );
+            })
+            .join("");
+        }
+
+        // Single renderer for every widget — used on load and after refresh so
+        // the charts, KPIs, panel, trend list, table and timestamps always move
+        // together (no more stale table after a refresh).
+        function applyAnalytics(data) {
+          var a = data && data.analytics ? data.analytics : data || {};
+          var board = Array.isArray(a.status_board) ? a.status_board : [];
+          var dist = a.risk_distribution || recomputeDistribution(board);
+          var distPct =
+            a.risk_distribution_pct || computePct(dist, board.length);
+
+          analytics.status_board = board;
+          analytics.risk_distribution = dist;
+          analytics.risk_distribution_pct = distPct;
+
+          // KPI cards.
+          setText("kpi-total-users", a.total_users);
+          setText("kpi-subscribed", a.subscribed_count);
+          setText("kpi-unsubscribed", a.unsubscribed_count);
+          setText("kpi-alert-count", a.alert_count);
+
+          // Distribution panel.
+          setText("dist-low", dist.Low);
+          setText("dist-low-pct", distPct.Low);
+          setText("dist-med", dist.Medium);
+          setText("dist-med-pct", distPct.Medium);
+          setText("dist-high", dist.High);
+          setText("dist-high-pct", distPct.High);
+          setText("total-risk-index", a.total_risk_index);
+          setText("highest-risk-county", a.highest_risk_county);
+          setText("high-count", a.high_risk_count);
+
+          // Timestamps.
+          if (a.generated_at) setText("generated-at", a.generated_at);
+          if (data && data.last_sync) {
+            setText(
+              "chart-live-status",
+              "Live • latest system output as of " + data.last_sync,
+            );
+          }
+
+          renderPieChart();
+          renderBarChart();
+          renderTrendList();
+          renderTable();
+        }
+
+        // Initial render from server-injected data (visible before any click).
+        function renderInitial() {
+          renderPieChart();
+          renderBarChart();
+          renderTrendList();
+          renderTable();
+        }
+
+        // Lightweight auto-refresh: reads the latest persisted system output
+        // without re-ingesting or force-recomputing, so the page stays live.
+        function loadAnalyticsSummary() {
+          fetch("/api/v1/admin/analytics/summary")
+            .then(function (res) {
+              return res.json();
+            })
+            .then(function (data) {
+              if (data.status !== "ok") return;
+              applyAnalytics(data);
+            })
+            .catch(function () {
+              // Keep the last good data; a transient failure is not fatal.
+            });
+        }
+
+        // Heavy refresh: re-ingest + force-recompute every county, then update
+        // ALL widgets from the fresh analytics payload.
+        function refreshAnalytics() {
+          var btn = document.getElementById("btn-refresh");
+          var originalHtml = btn ? btn.innerHTML : "";
+          if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = "Recomputing...";
+          }
+          setText(
+            "chart-live-status",
+            "Recomputing the latest system output — please wait...",
+          );
+
+          fetch("/api/v1/admin/telemetry/refresh")
+            .then(function (res) {
+              return res.json();
+            })
+            .then(function (data) {
+              if (data.status !== "ok") {
+                throw new Error(data.message || "Refresh failed.");
+              }
+              applyAnalytics(data);
+            })
+            .catch(function (err) {
+              console.error(err);
+              alert("Could not refresh analytics data. Please try again.");
+            })
+            .finally(function () {
+              if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+              }
+            });
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+          renderInitial();
+          // Confirm the page is live and set timestamps on first load.
+          loadAnalyticsSummary();
+          // Keep the lightweight summary fresh automatically.
+          setInterval(loadAnalyticsSummary, 60000);
+        });
+
+        // Fade out the welcome / flash message after 3 seconds.
+        var flashMessages = document.querySelectorAll(".flash-message");
+        flashMessages.forEach(function (msg) {
           setTimeout(function () {
-            msg.style.display = "none";
-          }, 800);
-        }, 3000);
-      });
+            msg.classList.add("fading");
+            setTimeout(function () {
+              msg.style.display = "none";
+            }, 800);
+          }, 3000);
+        });
+
+        // Expose for the inline Refresh button handler.
+        window.refreshAnalytics = refreshAnalytics;
+      })();
     </script>
 
     <style>

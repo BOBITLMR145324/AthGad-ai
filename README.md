@@ -66,7 +66,7 @@ The system fuses multiple live data feeds, detects anomalies using an **Isolatio
 │   REST API: /api/v1/risk-status, /alerts/history, /health,           │
 │             /live-summary, /telemetry/refresh                        │
 │   Routes: /, /dashboard, /telemetry, /register, /login, /logout      │
-│           /subscribe, /unsubscribe, /unsubscribe/reason              │
+│           /profile, /subscribe, /unsubscribe, /unsubscribe/reason    │
 │   Webhooks: /api/v1/mpesa/callback, /api/v1/sms/callback             │
 └──────────────┬──────────────────────────────────┬───────────────────┘
                ▼                                  ▼
@@ -161,6 +161,29 @@ This creates the `AthGad_db` database (if missing), enables **PostGIS**, and bui
 - `users` — citizen accounts, subscriptions, trial & payment status
 - `risk_alerts` — historical AI risk calculations per county
 - `unsubscriptions` — opt-out feedback with reasons
+- `sms_delivery_logs` — every outbound SMS attempt + Africa's Talking outcome
+- `alert_dispatch_logs` — every dispatched SMS/email (recipient, message, subscription status, result)
+
+`python core/db_init.py` is **idempotent**: re-running it is safe on both fresh and
+existing databases. Any legacy `id SERIAL` columns are automatically migrated to the
+human-readable, domain-specific primary keys below (existing rows are preserved).
+
+### Human-Readable Primary Keys
+
+Instead of auto-incrementing integers, every record is keyed on a prefixed
+alphanumeric code tailored to its domain. Codes use an unambiguous alphabet
+(no `0/O`, `1/I`) so they are safe to read aloud, transcribe, and put in URLs,
+SMS messages, and PDF reports.
+
+| Table                  | Key column           | Example                     | Meaning                                  |
+| ---------------------- | -------------------- | --------------------------- | ---------------------------------------- |
+| `climate_records`      | `climate_code`       | `CLI-20260808-3F9KQ2`       | CLI + date + random                      |
+| `health_records`       | `health_code`        | `HLT-KIT-MAL-20260808-A3F9` | HLT + county + disease + date + random   |
+| `space_weather_records`| `space_weather_code` | `SPW-20260808-183012-Q2K3`  | SPW + timestamp + random                 |
+| `users`                | `user_code`          | `USR-20260808-7KQ3F9`       | USR + date + random                      |
+| `risk_alerts`          | `alert_code`         | `RA-KIT-20260808183012-F9Q2`| RA + county + datetime + random          |
+| `unsubscriptions`      | `unsub_ref`          | `Jane Doe`                  | person's full name (legacy human key)    |
+| `alert_dispatch_logs`  | `dispatch_code`      | `DS-20260808183012-F9Q2`    | DS + datetime + random (on `id` serial)  |
 
 ### 4. Run the Application
 
@@ -238,6 +261,7 @@ The engine persists every calculation to `risk_alerts` and triggers notification
 | GET      | `/register` / POST             | Create citizen account                                                                        |
 | GET      | `/login` / POST                | Authenticate                                                                                  |
 | GET      | `/logout`                      | Clear session                                                                                 |
+| GET/POST | `/profile`                     | View & edit your profile (name, phone, county, password) — citizens and admins                |
 | GET/POST | `/subscribe`                   | Configure alert channels & manage trial                                                       |
 | GET      | `/unsubscribe`                 | Email opt-out                                                                                 |
 | GET/POST | `/unsubscribe/reason`          | Collect unsubscribe feedback                                                                  |
@@ -251,6 +275,9 @@ The engine persists every calculation to `risk_alerts` and triggers notification
 | GET      | `/api/v1/check-trial-expiry`   | Cron-friendly trial expiration sweeper                                                        |
 | GET      | `/admin`                       | Admin workspace overview (admin-only)                                                         |
 | GET      | `/admin/reports`               | Admin PDF report generation hub (admin-only)                                                  |
+| GET      | `/admin/sms-delivery`          | Realtime SMS/email dispatch debugging console, auto-refreshing (admin-only)                   |
+| GET      | `/api/v1/admin/sms-delivery`   | Latest SMS delivery attempts (status, AT status, cost, message id, errors) — admin-only       |
+| GET      | `/api/v1/admin/dispatch-logs`  | Latest tracked SMS/email dispatches (recipient, message, subscription status) — admin-only    |
 | GET      | `/admin/analytics`             | Admin system analytics & risk analysis (admin-only)                                           |
 | GET      | `/admin/reports/<type>/pdf`    | Download a specific PDF report (admin-only)                                                   |
 
@@ -290,6 +317,7 @@ Reports are generated live with **ReportLab** (`services/pdf_report_service.py`)
 | **Disease Outbreaks** (`disease_outbreaks`)       | Predicted disease outbreaks (e.g. Malaria, Cholera) per county with reported cases and recommended preventive measures.                               |
 | **Subscribed Members** (`subscribed_members`)     | Currently subscribed members with their names and subscription date & time.                                                                           |
 | **Unsubscribed Members** (`unsubscribed_members`) | Unsubscribed members with their reasons for unsubscription (channel + reason) and the subscription period expressed in days, weeks, months, or years. |
+| **Alert Dispatch Logs** (`alert_dispatch_logs`)   | Every tracked SMS/email dispatch — recipient (phone number or email), the exact message sent, subscription status at dispatch time, and delivery result. |
 
 All PDF downloads are recorded in the audit log.
 
@@ -342,6 +370,7 @@ AthGad-ai/
 │   └── space_weather_ingestion.py  # NOAA Kp-index fetcher
 ├── static/
 │   └── js/
+│       ├── chart.umd.min.js        # Chart.js 4.4.1 bundled locally (no CDN)
 │       └── dashboard.js            # Dashboard chart & API interactions
 ├── templates/
 │   ├── _logo.html                  # Shared logo partial
@@ -349,13 +378,15 @@ AthGad-ai/
 │   ├── landing.html                # Public marketing page
 │   ├── login.html                  # Sign-in form
 │   ├── register.html               # Registration form
+│   ├── profile.html                # View/edit profile (citizens & admins)
 │   ├── subscribe.html              # Subscription & payment page
 │   ├── telemetry.html              # Public live risk board
 │   ├── unsubscribe_reason.html     # Opt-out feedback form
 │   └── admin/
-│       ├── dashboard.html          # Admin workspace overview
-│       ├── reports.html            # PDF report hub
-│       └── analytics.html          # System analytics & charts
+│   ├── dashboard.html          # Admin workspace overview
+│   ├── reports.html            # PDF report hub
+│   ├── sms_delivery.html       # Realtime SMS/email dispatch debugging console
+│   └── analytics.html          # System analytics & charts
 └── TODO.md                         # Refactor tracker & improvement ideas
 ```
 
@@ -388,6 +419,7 @@ Completed:
 - ✅ Made the landing "Live Risk Signals" card dynamic with processed telemetry data (`/api/v1/live-summary`).
 - ✅ Added a public telemetry Refresh button backed by `/api/v1/telemetry/refresh` (no login required).
 - ✅ Removed underlines from all links/buttons and compacted the landing header for a cleaner UI.
+- ✅ Bundled Chart.js locally (`static/js/chart.umd.min.js`) so dashboards/analytics charts render fully offline (no CDN dependency).
 
 Remaining:
 

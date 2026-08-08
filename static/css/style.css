@@ -1022,6 +1022,14 @@ textarea {
 table {
   border-collapse: collapse;
 }
+/* Long unbroken text (e.g. user-entered reasons) wraps onto new lines inside
+   the cell instead of stretching the table outside its container. Column
+   widths stay auto-fit (no max-width here — that squishes table rows). */
+th,
+td {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
 
 /* ---------- Opacity ---------- */
 .opacity-100 {

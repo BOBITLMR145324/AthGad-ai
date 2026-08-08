@@ -31,7 +31,7 @@ def promote_to_admin(email: str) -> bool:
     try:
         with engine.begin() as conn:
             existing = conn.execute(
-                text("SELECT id FROM users WHERE email = :email"),
+                text("SELECT user_code FROM users WHERE email = :email"),
                 {"email": email},
             ).fetchone()
 
