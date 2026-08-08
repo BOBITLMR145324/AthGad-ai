@@ -240,20 +240,33 @@
           >
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full table-auto text-left text-xs">
+          <table class="w-full table-fixed text-left text-xs">
+            <colgroup>
+              <col style="width: 14%" />
+              <col style="width: 10%" />
+              <col style="width: 9%" />
+              <col style="width: 7%" />
+              <col style="width: 7%" />
+              <col style="width: 8%" />
+              <col style="width: 8%" />
+              <col style="width: 5%" />
+              <col style="width: 6%" />
+              <col style="width: 9%" />
+              <col style="width: 17%" />
+            </colgroup>
             <thead>
               <tr class="text-slate-400 border-b border-slate-800">
-                <th class="px-4 py-3 font-semibold">Time</th>
-                <th class="px-4 py-3 font-semibold">Phone</th>
-                <th class="px-4 py-3 font-semibold">Name</th>
-                <th class="px-4 py-3 font-semibold">Type</th>
-                <th class="px-4 py-3 font-semibold">Tier</th>
-                <th class="px-4 py-3 font-semibold">Status</th>
-                <th class="px-4 py-3 font-semibold">AT Status</th>
-                <th class="px-4 py-3 font-semibold">HTTP</th>
-                <th class="px-4 py-3 font-semibold">Cost</th>
-                <th class="px-4 py-3 font-semibold">Msg ID</th>
-                <th class="px-4 py-3 font-semibold">Error Detail</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Time</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Phone</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Name</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Type</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Tier</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Status</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">AT Status</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">HTTP</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Cost</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Msg ID</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Error Detail</th>
               </tr>
             </thead>
             <tbody id="sms-table-body"></tbody>
@@ -277,16 +290,25 @@
           >
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full table-auto text-left text-xs">
+          <table class="w-full table-fixed text-left text-xs">
+            <colgroup>
+              <col style="width: 16%" />
+              <col style="width: 9%" />
+              <col style="width: 15%" />
+              <col style="width: 8%" />
+              <col style="width: 11%" />
+              <col style="width: 8%" />
+              <col style="width: 33%" />
+            </colgroup>
             <thead>
               <tr class="text-slate-400 border-b border-slate-800">
-                <th class="px-4 py-3 font-semibold">Time</th>
-                <th class="px-4 py-3 font-semibold">Channel</th>
-                <th class="px-4 py-3 font-semibold">Recipient</th>
-                <th class="px-4 py-3 font-semibold">Type</th>
-                <th class="px-4 py-3 font-semibold">Subscription</th>
-                <th class="px-4 py-3 font-semibold">Status</th>
-                <th class="px-4 py-3 font-semibold">Message</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Time</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Channel</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Recipient</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Type</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Subscription</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Status</th>
+                <th class="px-3 py-3 font-semibold uppercase tracking-wider">Message</th>
               </tr>
             </thead>
             <tbody id="dispatch-table-body"></tbody>
@@ -333,13 +355,25 @@
         background: rgba(100, 116, 139, 0.15);
         color: #94a3b8;
       }
-      .msg-cell {
-        min-width: 0;
-        max-width: 360px;
-        white-space: normal;
-        word-break: break-word;
-        color: #94a3b8;
-        line-height: 1.5;
+      /* Keep ellipsis working reliably inside fixed-width table cells. */
+      .table-fixed td.truncate,
+      .table-fixed th.truncate {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 0;
+      }
+      /* Align every cell to the top so short columns stay tidy next to tall
+         wrapped message/error-detail rows. */
+      .table-fixed tbody td {
+        vertical-align: top;
+      }
+      /* Subtle zebra striping for readability. */
+      tbody tr:nth-child(even) {
+        background: rgba(30, 41, 59, 0.35);
+      }
+      tbody tr:hover {
+        background: rgba(30, 41, 59, 0.75) !important;
       }
     </style>
 
@@ -433,49 +467,63 @@
         var body = document.getElementById("sms-table-body");
         if (!logs.length) {
           body.innerHTML =
-            '<tr><td colspan="11" class="px-4 py-8 text-center text-slate-500">No SMS deliveries matched yet.</td></tr>';
+            '<tr><td colspan="11" class="px-3 py-8 text-center text-slate-500">No SMS deliveries matched yet.</td></tr>';
           return;
         }
         body.innerHTML = logs
           .map(function (l) {
             return (
               "<tr class='border-b border-slate-800/60 hover:bg-slate-800/40'>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-3 py-2.5 text-slate-400 truncate' title='" +
+              esc(l.logged_at) +
+              "'>" +
               esc(l.logged_at) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-200'>" +
+              "<td class='px-3 py-2.5 text-slate-200 truncate' title='" +
+              esc(l.phone_number) +
+              "'>" +
               esc(l.phone_number) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-300'>" +
+              "<td class='px-3 py-2.5 text-slate-300 truncate' title='" +
               esc(l.name) +
+              "'>" +
+              esc(l.name || "—") +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-3 py-2.5 text-slate-400 truncate' title='" +
+              esc(l.message_type) +
+              "'>" +
               esc(l.message_type) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-3 py-2.5 text-slate-400 truncate' title='" +
+              esc(l.tier) +
+              "'>" +
               esc(l.tier) +
               "</td>" +
-              "<td class='px-4 py-2.5'>" +
+              "<td class='px-3 py-2.5'>" +
               statusBadge(l.status) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-3 py-2.5 text-slate-400 truncate' title='" +
               esc(l.at_status) +
+              "'>" +
+              esc(l.at_status || "—") +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-3 py-2.5 text-slate-400 text-right truncate' title='" +
+              esc(l.http_status || "—") +
+              "'>" +
               esc(l.http_status || "—") +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-3 py-2.5 text-slate-400 text-right truncate' title='" +
               esc(l.cost) +
+              "'>" +
+              esc(l.cost || "—") +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-400' title='" +
+              "<td class='px-3 py-2.5 text-slate-400 truncate' title='" +
               esc(l.message_id) +
               "'>" +
-              "<span class='block truncate max-w-[170px]'>" +
-              esc(l.message_id) +
-              "</span>" +
+              esc(l.message_id || "—") +
               "</td>" +
-              "<td class='px-4 py-2.5 text-rose-300/80 msg-cell'>" +
-              esc(l.error_detail) +
+              "<td class='px-3 py-2.5 text-rose-300/80 whitespace-normal break-words leading-relaxed'>" +
+              esc(l.error_detail || "—") +
               "</td>" +
               "</tr>"
             );
@@ -487,32 +535,40 @@
         var body = document.getElementById("dispatch-table-body");
         if (!logs.length) {
           body.innerHTML =
-            '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No tracked dispatches matched yet.</td></tr>';
+            '<tr><td colspan="7" class="px-3 py-8 text-center text-slate-500">No tracked dispatches matched yet.</td></tr>';
           return;
         }
         body.innerHTML = logs
           .map(function (l) {
             return (
               "<tr class='border-b border-slate-800/60 hover:bg-slate-800/40'>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-3 py-2.5 text-slate-400 truncate' title='" +
+              esc(l.dispatched_at) +
+              "'>" +
               esc(l.dispatched_at) +
               "</td>" +
-              "<td class='px-4 py-2.5'>" +
+              "<td class='px-3 py-2.5'>" +
               channelBadge(l.channel) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-200'>" +
+              "<td class='px-3 py-2.5 text-slate-200 truncate' title='" +
+              esc(l.recipient) +
+              "'>" +
               esc(l.recipient) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-3 py-2.5 text-slate-400 truncate' title='" +
+              esc(l.message_type) +
+              "'>" +
               esc(l.message_type) +
               "</td>" +
-              "<td class='px-4 py-2.5 text-slate-400'>" +
+              "<td class='px-3 py-2.5 text-slate-400 truncate' title='" +
+              esc(l.subscription_status) +
+              "'>" +
               esc(l.subscription_status) +
               "</td>" +
-              "<td class='px-4 py-2.5'>" +
+              "<td class='px-3 py-2.5'>" +
               statusBadge(l.status) +
               "</td>" +
-              "<td class='px-4 py-2.5 msg-cell'>" +
+              "<td class='px-3 py-2.5 text-slate-300 whitespace-normal break-words leading-relaxed'>" +
               esc(l.message) +
               "</td>" +
               "</tr>"
