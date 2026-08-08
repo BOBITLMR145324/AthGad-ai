@@ -52,7 +52,7 @@
       <a
         href="/admin/reports"
         class="bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase no-underline"
-        >PDF Reports</a
+        >REPORTS</a
       >
       <a
         href="/admin/sms-delivery"
@@ -148,7 +148,7 @@
           <button
             type="button"
             id="clear-range"
-            class="border border-slate-700 hover:bg-slate-800 text-slate-300 font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition cursor-pointer"
+            class="bg-amber-600 hover:bg-amber-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition cursor-pointer"
           >
             Clear
           </button>
@@ -266,7 +266,7 @@
             data-report="/admin/reports/predicted_calamities/pdf"
             class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
-            📄 Download PDF
+            📄 Download
           </a>
         </div>
 
@@ -294,7 +294,7 @@
             data-report="/admin/reports/disease_outbreaks/pdf"
             class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
-            📄 Download PDF
+            📄 Download
           </a>
         </div>
 
@@ -320,7 +320,7 @@
             data-report="/admin/reports/subscribed_members/pdf"
             class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
-            📄 Download PDF
+            📄 Download
           </a>
         </div>
 
@@ -346,7 +346,7 @@
             data-report="/admin/reports/unsubscribed_members/pdf"
             class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
-            📄 Download PDF
+            📄 Download
           </a>
         </div>
 
@@ -373,7 +373,7 @@
             data-report="/admin/reports/alert_dispatch_logs/pdf"
             class="pdf-link inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs tracking-wider uppercase transition no-underline"
           >
-            📄 Download PDF
+            📄 Download
           </a>
         </div>
       </div>
@@ -411,9 +411,32 @@
       }
 
       // Report time span: apply the selected date range to every download link.
+      function yearTooFar(value) {
+        var parts = String(value).split("-");
+        if (parts.length !== 3 || !/^\d{4}$/.test(parts[0])) return true;
+        var currentYear = new Date().getFullYear();
+        return parseInt(parts[0], 10) > currentYear;
+      }
+
       function applyRange() {
         var from = document.getElementById("date-from").value;
         var to = document.getElementById("date-to").value;
+        if (from && yearTooFar(from)) {
+          alert(
+            "Start date year must be 4 digits and cannot be beyond " +
+              new Date().getFullYear() +
+              "."
+          );
+          return;
+        }
+        if (to && yearTooFar(to)) {
+          alert(
+            "End date year must be 4 digits and cannot be beyond " +
+              new Date().getFullYear() +
+              "."
+          );
+          return;
+        }
         if (from && to && from > to) {
           alert("Start date cannot be after the end date.");
           return;
@@ -442,6 +465,10 @@
       }
 
       function initRange() {
+        var currentYear = new Date().getFullYear();
+        var maxDate = currentYear + "-12-31";
+        document.getElementById("date-from").setAttribute("max", maxDate);
+        document.getElementById("date-to").setAttribute("max", maxDate);
         var params = new URLSearchParams(window.location.search);
         document.getElementById("date-from").value = params.get("date_from") || "";
         document.getElementById("date-to").value = params.get("date_to") || "";

@@ -1987,8 +1987,22 @@ def admin_report_pdf(report_type):
         audit("admin_report", actor=session.get('user_email'),
               target=report_type, outcome="invalid",
               details={"reason": "bad_date_format"})
-        flash("Invalid date range. Dates must use the YYYY-MM-DD format.", "error")
+        flash("Invalid date range. Dates must use the YYYY-MM-DD format "
+              "(4-digit year).", "error")
         return redirect(url_for('admin_reports'))
+
+    # The year must be exactly four digits (enforced by %Y above) and cannot
+    # be beyond the current year.
+    current_year = _eat_now().year
+    for label, value in (("start", date_from), ("end", date_to)):
+        if value is not None and value.year > current_year:
+            audit("admin_report", actor=session.get('user_email'),
+                  target=report_type, outcome="invalid",
+                  details={"reason": "future_year", "field": label})
+            flash(f"The {label} date cannot be in a year beyond {current_year}.",
+                  "error")
+            return redirect(url_for('admin_reports'))
+
     if date_from and date_to and date_from > date_to:
         audit("admin_report", actor=session.get('user_email'),
               target=report_type, outcome="invalid",
