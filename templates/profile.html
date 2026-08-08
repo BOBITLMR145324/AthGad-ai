@@ -422,7 +422,7 @@
             <button
               type="button"
               id="delete-account-btn"
-              class="bg-rose-700 hover:bg-rose-600 text-white font-bold py-2.5 px-6 rounded-lg text-sm tracking-wider uppercase transition cursor-pointer"
+              class="text-white font-bold py-2.5 px-6 rounded-lg text-sm tracking-wider uppercase transition cursor-pointer"
             >
               Delete My Account
             </button>
@@ -497,7 +497,8 @@
             </button>
             <button
               type="submit"
-              class="flex-1 bg-rose-700 hover:bg-rose-600 text-white font-bold py-2.5 rounded-lg text-sm tracking-wider uppercase transition cursor-pointer"
+              id="confirm-delete-btn"
+              class="flex-1 text-white font-bold py-2.5 rounded-lg text-sm tracking-wider uppercase transition cursor-pointer"
             >
               Yes, Delete
             </button>
@@ -513,6 +514,16 @@
       }
       .flash-message.fading {
         opacity: 0;
+      }
+      /* Account deletion buttons: bright red base with a darker hover state. */
+      #delete-account-btn,
+      #confirm-delete-btn {
+        background-color: #dc2626;
+        box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
+      }
+      #delete-account-btn:hover,
+      #confirm-delete-btn:hover {
+        background-color: #b91c1c;
       }
     </style>
 
