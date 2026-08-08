@@ -230,16 +230,30 @@ class AthGadAlertService:
         """Builds the exact SMS message body for a tiered alert dispatch."""
         risk_advisory = risk_advisory or {}
         if is_premium:
-            # Summarize cascading effects and proactive measures for SMS (keep concise)
+            # Structure the message as clean labelled blocks — uppercase
+            # headings serve as SMS "bold" and every block sits on its own
+            # line so the alert is easy to scan on a phone.
             cascading_list = risk_advisory.get("cascading_effects", []) or []
             proactive_list = risk_advisory.get("proactive_solutions", []) or []
-            cascading_text = "; ".join(cascading_list[:3]) if cascading_list else "Monitor local advisories."
-            proactive_text = "; ".join(proactive_list[:2]) if proactive_list else "Stay safe and follow local guidance."
+
+            impacts = "\n".join(
+                f"{i}. {item}" for i, item in enumerate(cascading_list[:3], 1)
+            ) if cascading_list else "1. Monitor local advisories."
+
+            actions = "\n".join(
+                f"{i}. {item}" for i, item in enumerate(proactive_list[:2], 1)
+            ) if proactive_list else "1. Stay safe and follow local guidance."
+
             return (
-                f"AthGad AI: Hello {name}! {county} County is at {level.upper()} RISK. "
-                f"Threat: {calamity}. "
-                f"Possible impacts: {cascading_text} "
-                f"What to do: {proactive_text} "
+                f"AthGad AI ALERT: {county.upper()} COUNTY - {level.upper()} RISK\n"
+                f"Hello {name}!\n"
+                f"\n"
+                f"THREAT:\n{calamity}\n"
+                f"\n"
+                f"IMPACTS:\n{impacts}\n"
+                f"\n"
+                f"WHAT TO DO:\n{actions}\n"
+                f"\n"
                 f"Reply STOP to stop receiving these alerts."
             )
         return (

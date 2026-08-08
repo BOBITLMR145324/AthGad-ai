@@ -986,6 +986,79 @@ def profile_page():
     )
 
 
+@app.route('/profile/delete', methods=['POST'])
+@limiter.limit("5 per minute")
+def delete_account():
+    """
+    Permanently deletes the signed-in user's account and every related record
+    from the database (dispatch logs, SMS delivery logs, unsubscriptions and
+    the users row itself). The current password must be supplied as a final
+    confirmation before anything is removed.
+    """
+    if 'user_email' not in session:
+        flash("Please sign in to manage your profile.", "warning")
+        return redirect(url_for('login_page'))
+
+    email = session['user_email']
+    password_input = request.form.get('password', '')
+
+    if not password_input:
+        flash("Please enter your password to confirm account deletion.", "error")
+        return redirect(url_for('profile_page'))
+
+    engine = get_db_engine()
+    try:
+        with engine.connect() as connection:
+            stored = connection.execute(
+                text("SELECT password_hash, phone_number FROM users WHERE email = :email"),
+                {"email": email},
+            ).fetchone()
+
+        if not stored:
+            session.clear()
+            flash("Your account no longer exists. You have been signed out.", "info")
+            return redirect(url_for('landing'))
+
+        if not check_password_hash(stored.password_hash, password_input):
+            audit("account_delete", actor=email, outcome="failed",
+                  details={"reason": "wrong_password"})
+            flash("Incorrect password. Your account was not deleted.", "error")
+            return redirect(url_for('profile_page'))
+
+        phone_number = stored.phone_number
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("""
+                    DELETE FROM alert_dispatch_logs
+                    WHERE recipient IN (:email, :phone);
+                """),
+                {"email": email, "phone": phone_number or ""},
+            )
+            connection.execute(
+                text("DELETE FROM sms_delivery_logs WHERE phone_number = :phone;"),
+                {"phone": phone_number or ""},
+            )
+            connection.execute(
+                text("DELETE FROM unsubscriptions WHERE email = :email;"),
+                {"email": email},
+            )
+            deleted = connection.execute(
+                text("DELETE FROM users WHERE email = :email;"),
+                {"email": email},
+            )
+    except Exception as e:
+        print(f"Account deletion error: {e}")
+        audit("account_delete", actor=email, outcome="error", details={"reason": str(e)})
+        flash("Could not delete your account. Please try again.", "error")
+        return redirect(url_for('profile_page'))
+
+    audit("account_delete", actor=email, outcome="success",
+          details={"user_deleted": bool(deleted.rowcount)})
+    session.clear()
+    return redirect(url_for('landing', account_deleted=1))
+
+
 # =====================================================================
 # SUBSCRIPTION & PAYMENT MANAGEMENT PIPELINE
 # =====================================================================
