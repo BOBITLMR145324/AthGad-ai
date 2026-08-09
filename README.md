@@ -111,63 +111,6 @@ pip install -r requirements.txt
 
 Create `config/.env` from the template below:
 
-```ini
-# ── Database ─────────────────────────────
-DB_USER=postgres
-DB_PASSWORD=your_db_password
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=AthGad_db
-
-# ── Flask ────────────────────────────────
-FLASK_SECRET_KEY=change_me_to_a_long_random_string
-
-# ── Region (Eastern Kenya reference point) ──
-REGIONAL_LAT=-1.2921
-REGIONAL_LONG=37.9942
-
-# ── Africa's Talking (SMS) ───────────────
-AT_USERNAME=sandbox
-AT_API_KEY=your_at_api_key
-AT_SENDER_ID=AthGad
-AT_IS_SANDBOX=true
-
-# ── SMTP (Email) ─────────────────────────
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=587
-GMAIL_SENDER=alerts@AthGad.ai
-GMAIL_APP_PASSWORD=your_app_password
-
-# ── Safaricom Daraja (M-PESA) ────────────
-MPESA_ENVIRONMENT=sandbox
-MPESA_CONSUMER_KEY=your_consumer_key
-MPESA_CONSUMER_SECRET=your_consumer_secret
-MPESA_SHORTCODE=174379
-MPESA_PASSKEY=bfb279f0929bdb0511d07142f21a0c28bea5ea772543fe284637c5fe96397383
-MPESA_CALLBACK_URL=https://yourdomain.com/api/v1/mpesa/callback
-```
-
-### 3. Initialize the Database
-
-```bash
-python core/db_init.py
-```
-
-This creates the `AthGad_db` database (if missing), enables **PostGIS**, and builds all tables:
-
-- `climate_records` — daily temperature, precipitation, evapotranspiration (+ geometry)
-- `health_records` — county-level disease cases (Malaria, Cholera)
-- `space_weather_records` — planetary Kp-index readings
-- `users` — citizen accounts, subscriptions, trial & payment status
-- `risk_alerts` — historical AI risk calculations per county
-- `unsubscriptions` — opt-out feedback with reasons
-- `sms_delivery_logs` — every outbound SMS attempt + Africa's Talking outcome
-- `alert_dispatch_logs` — every dispatched SMS/email (recipient, message, subscription status, result)
-
-`python core/db_init.py` is **idempotent**: re-running it is safe on both fresh and
-existing databases. Any legacy `id SERIAL` columns are automatically migrated to the
-human-readable, domain-specific primary keys below (existing rows are preserved).
-
 ### Human-Readable Primary Keys
 
 Instead of auto-incrementing integers, every record is keyed on a prefixed
@@ -387,7 +330,6 @@ AthGad-ai/
 │   ├── reports.html            # PDF report hub
 │   ├── sms_delivery.html       # Realtime SMS/email dispatch debugging console
 │   └── analytics.html          # System analytics & charts
-└── TODO.md                         # Refactor tracker & improvement ideas
 ```
 
 ---
@@ -402,33 +344,6 @@ AthGad-ai/
 - **Phone Normalization:** Inbound SMS phone numbers are normalized before lookup to prevent spoofing mismatches.
 - **Restricted CORS:** Cross-origin API access is now limited to an explicit whitelist (`CORS_ALLOWED_ORIGINS`) instead of the previous global `CORS(app)` allow-all.
 - **TLS Verification:** Outbound SMS requests now verify TLS certificates by default (`SSL_VERIFY=true`); `verify=False` is no longer hardcoded. Disable only for a trusted proxy termination scenario.
-
-> ✅ **Production hardening complete.** The previous `CORS(app)` global allow-all and hardcoded `verify=False` have been removed. Configure `CORS_ALLOWED_ORIGINS` and `SSL_VERIFY` in `config/.env` for your deployment.
-
----
-
-## 📈 Roadmap / Improvement Ideas
-
-Completed:
-
-- ✅ Replace random fallback baselines with deterministic per-county seasonal baselines.
-- ✅ Added adaptive seasonal weight tuning + time-series (trend/exp-smoothing) forecasting.
-- ✅ Added per-county Isolation Forest contamination tuning (configurable via env).
-- ✅ Added pluggable health-data provider: deterministic synthetic **or** real Ministry-of-Health feed.
-- ✅ Hardened CORS (whitelist) and TLS verification (`SSL_VERIFY`).
-- ✅ Made the landing "Live Risk Signals" card dynamic with processed telemetry data (`/api/v1/live-summary`).
-- ✅ Added a public telemetry Refresh button backed by `/api/v1/telemetry/refresh` (no login required).
-- ✅ Removed underlines from all links/buttons and compacted the landing header for a cleaner UI.
-- ✅ Bundled Chart.js locally (`static/js/chart.umd.min.js`) so dashboards/analytics charts render fully offline (no CDN dependency).
-
-Remaining:
-
-1. Centralize all user-facing copy into a single localization module (EN/SW).
-2. Compile Tailwind CSS instead of using the CDN for rural low-bandwidth performance.
-3. Add accessibility and contrast audits across all pages.
-4. Introduce rate-limiting and API-key auth for internal endpoints in production.
-
----
 
 ## 📄 License
 
