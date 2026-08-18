@@ -7,8 +7,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <title>Create Your Account - AthGad AI</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
 
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <link rel="stylesheet" href="/static/css/style.css?v={{ asset_version }}" />
   </head>
 
   <body
@@ -134,13 +135,54 @@
             >Secure Password</label
           >
 
-          <input
-            type="password"
-            name="password"
-            required
-            placeholder="••••••••"
-            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
-          />
+          <div class="relative password-wrapper">
+            <input
+              type="password"
+              name="password"
+              required
+              placeholder="••••••••"
+              class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 pr-10 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
+            />
+            <button
+              type="button"
+              class="js-toggle-password password-toggle"
+              aria-label="Show password"
+            >
+              <svg
+                class="eye-open"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width="1.5"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"
+                />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+              </svg>
+              <svg
+                class="eye-closed hidden"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width="1.5"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <hr class="border-slate-800 my-4" />
@@ -241,30 +283,8 @@
 
     <!-- Auto-Dismiss Script for Flash Alerts -->
 
-    <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        const alerts = document.querySelectorAll(".flash-alert");
+    <script src="/static/js/flash-alerts.js?v={{ asset_version }}"></script>
 
-        if (alerts.length > 0) {
-          setTimeout(() => {
-            alerts.forEach((alert) => {
-              // Skip auto-dismiss if notification requires user interaction (e.g. Account Match warning)
-
-              if (alert.dataset.persistent === "true") return;
-
-              // Fade out opacity
-
-              alert.classList.replace("opacity-100", "opacity-0");
-
-              // Remove element after fade completes
-
-              setTimeout(() => {
-                alert.remove();
-              }, 500);
-            });
-          }, 2000); // 2000ms = 2 seconds
-        }
-      });
-    </script>
+    <script src="/static/js/password-toggle.js?v={{ asset_version }}"></script>
   </body>
 </html>

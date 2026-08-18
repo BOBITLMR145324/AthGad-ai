@@ -1,0 +1,210 @@
+/* ============================================================
+   AthGad AI — Admin Workspace Shared Styles
+   Extracted from inline <style> blocks in admin templates.
+   ============================================================ */
+
+/* Welcome / flash messages fade out after 3 seconds. */
+.flash-message {
+  transition:
+    opacity 0.8s ease,
+    transform 0.8s ease;
+}
+.flash-message.fading {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+/* County risk trend chart — county checkbox dropdown. */
+.trend-filter {
+  position: relative;
+}
+.trend-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #cbd5e1;
+  background: #1e293b;
+  border: 1px solid #334155;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+.trend-filter-btn:hover,
+.trend-filter.open .trend-filter-btn {
+  border-color: #10b981;
+  color: #ffffff;
+}
+.trend-filter-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 230px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+}
+.trend-filter.open .trend-filter-menu {
+  display: flex;
+}
+.trend-filter-actions {
+  display: flex;
+  gap: 6px;
+  padding: 4px 4px 10px;
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 6px;
+}
+.trend-filter-actions button {
+  flex: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  transition: all 0.2s ease;
+}
+.trend-filter-actions button:hover {
+  border-color: #10b981;
+  color: #ffffff;
+}
+.trend-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.trend-filter-option:hover {
+  background: #1e293b;
+}
+.trend-filter-option input {
+  accent-color: #10b981;
+  cursor: pointer;
+  margin: 0;
+}
+.trend-filter-option .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+.trend-filter-option.off {
+  opacity: 0.45;
+}
+.trend-filter-option.focus {
+  outline: 1px solid #10b981;
+  background: #1e293b;
+}
+
+/* Realtime SMS delivery console status chips & badges. */
+.status-chip {
+  border: 1px solid #334155;
+}
+.status-chip.status-chip-active {
+  background: #10b981;
+  color: #04251c;
+  border-color: #10b981;
+}
+.status-chip:hover {
+  border-color: #10b981;
+  color: #ffffff;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.badge-success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+.badge-failed {
+  background: rgba(244, 63, 94, 0.15);
+  color: #fb7185;
+}
+.badge-simulated {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+}
+.badge-unknown {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+}
+/* Keep ellipsis working reliably inside fixed-width table cells. */
+.table-fixed td.truncate,
+.table-fixed th.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 0;
+}
+/* Align every cell to the top so short columns stay tidy next to tall
+   wrapped message/error-detail rows. */
+.table-fixed tbody td {
+  vertical-align: top;
+}
+/* Subtle zebra striping for readability. */
+tbody tr:nth-child(even) {
+  background: rgba(30, 41, 59, 0.35);
+}
+tbody tr:hover {
+  background: rgba(30, 41, 59, 0.75) !important;
+}
+/* Dispatch-log pagination controls. */
+.pager-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #cbd5e1;
+  background: #1e293b;
+  border: 1px solid #334155;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.pager-btn:hover:not(:disabled) {
+  border-color: #10b981;
+  color: #ffffff;
+}
+.pager-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.pager-btn.pager-active {
+  background: #10b981;
+  color: #04251c;
+  border-color: #10b981;
+}
+.pager-dots {
+  color: #64748b;
+  padding: 0 2px;
+  font-size: 12px;
+}
+.pager-info {
+  font-size: 11px;
+  color: #94a3b8;
+  margin: 0 8px;
+}

@@ -94,7 +94,7 @@ def _make_logger(name: str) -> logging.Logger:
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
     except Exception as e:
-        print(f"Could not attach persistent log file: {e}")
+        logger.warning("Could not attach persistent log file: %s", e)
 
     logger.propagate = False
     return logger
@@ -190,11 +190,21 @@ def apply_security_headers(response):
 # ---------------------------------------------------------------------------
 
 def _client_ip() -> str:
-    """Best-effort client IP extraction, honoring trusted proxy headers."""
+    """
+    Best-effort client IP extraction.
+
+    When the app runs behind a reverse proxy, werkzeug's ProxyFix (configured
+    in app.py) rewrites request.remote_addr to the real client address, so the
+    raw X-Forwarded-For header must NOT be trusted independently (it can be
+    spoofed by clients that connect directly). The header is only consulted as
+    a last-resort fallback when remote_addr is missing.
+    """
+    if request.remote_addr:
+        return request.remote_addr
     forwarded = request.headers.get("X-Forwarded-For", "")
     if forwarded:
         return forwarded.split(",")[0].strip()
-    return request.remote_addr or "unknown"
+    return "unknown"
 
 
 def client_identifier() -> str:

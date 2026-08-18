@@ -121,6 +121,12 @@ DB_NAME=AthGad_db
 
 # ── Flask ────────────────────────────────
 FLASK_SECRET_KEY=change_me_to_a_long_random_string
+# Set to true when the app is served over HTTPS (enables HSTS + Secure session cookie)
+ENFORCE_HTTPS=false
+# How many reverse proxies sit in front of the app (affects client-IP detection).
+# PROXY_FORWARDED_COUNT=1
+# Rate-limit storage. In-memory is fine for dev; use Redis across gunicorn workers:
+# RATE_LIMIT_STORAGE_URI=redis://127.0.0.1:6379/0
 
 # ── Region (Eastern Kenya reference point) ──
 REGIONAL_LAT=-1.2921
@@ -138,6 +144,12 @@ SMTP_PORT=587
 GMAIL_SENDER=alerts@AthGad.ai
 GMAIL_APP_PASSWORD=your_app_password
 
+# ── Alerts ───────────────────────────────
+# Hours a county+risk-level dispatch is suppressed after an alert is sent, so
+# dashboard refreshes / risk-status polls don't re-notify everyone. Level
+# changes (e.g. Medium -> High) still dispatch immediately.
+ALERT_DISPATCH_COOLDOWN_HOURS=6
+
 # ── Safaricom Daraja (M-PESA) ────────────
 MPESA_ENVIRONMENT=sandbox
 MPESA_CONSUMER_KEY=your_consumer_key
@@ -145,6 +157,10 @@ MPESA_CONSUMER_SECRET=your_consumer_secret
 MPESA_SHORTCODE=174379
 MPESA_PASSKEY=bfb279f0929bdb0511d07142f21a0c28bea5ea772543fe284637c5fe96397383
 MPESA_CALLBACK_URL=https://yourdomain.com/api/v1/mpesa/callback
+# Comma-separated CIDRs allowed to call the callback webhook. Leave empty to
+# allow any source (dev). In production, restrict to Safaricom's published
+# callback IP ranges: e.g. 196.201.214.0/24,196.201.215.0/24
+MPESA_CALLBACK_IP_ALLOWLIST=
 ```
 
 ### 3. Initialize the Database
@@ -175,15 +191,15 @@ alphanumeric code tailored to its domain. Codes use an unambiguous alphabet
 (no `0/O`, `1/I`) so they are safe to read aloud, transcribe, and put in URLs,
 SMS messages, and PDF reports.
 
-| Table                  | Key column           | Example                     | Meaning                                  |
-| ---------------------- | -------------------- | --------------------------- | ---------------------------------------- |
-| `climate_records`      | `climate_code`       | `CLI-20260808-3F9KQ2`       | CLI + date + random                      |
-| `health_records`       | `health_code`        | `HLT-KIT-MAL-20260808-A3F9` | HLT + county + disease + date + random   |
-| `space_weather_records`| `space_weather_code` | `SPW-20260808-183012-Q2K3`  | SPW + timestamp + random                 |
-| `users`                | `user_code`          | `USR-20260808-7KQ3F9`       | USR + date + random                      |
-| `risk_alerts`          | `alert_code`         | `RA-KIT-20260808183012-F9Q2`| RA + county + datetime + random          |
-| `unsubscriptions`      | `unsub_ref`          | `Jane Doe`                  | person's full name (legacy human key)    |
-| `alert_dispatch_logs`  | `dispatch_code`      | `DS-20260808183012-F9Q2`    | DS + datetime + random (on `id` serial)  |
+| Table                   | Key column           | Example                      | Meaning                                 |
+| ----------------------- | -------------------- | ---------------------------- | --------------------------------------- |
+| `climate_records`       | `climate_code`       | `CLI-20260808-3F9KQ2`        | CLI + date + random                     |
+| `health_records`        | `health_code`        | `HLT-KIT-MAL-20260808-A3F9`  | HLT + county + disease + date + random  |
+| `space_weather_records` | `space_weather_code` | `SPW-20260808-183012-Q2K3`   | SPW + timestamp + random                |
+| `users`                 | `user_code`          | `USR-20260808-7KQ3F9`        | USR + date + random                     |
+| `risk_alerts`           | `alert_code`         | `RA-KIT-20260808183012-F9Q2` | RA + county + datetime + random         |
+| `unsubscriptions`       | `unsub_ref`          | `Jane Doe`                   | person's full name (legacy human key)   |
+| `alert_dispatch_logs`   | `dispatch_code`      | `DS-20260808183012-F9Q2`     | DS + datetime + random (on `id` serial) |
 
 ### 4. Run the Application
 
@@ -253,33 +269,33 @@ The engine persists every calculation to `risk_alerts` and triggers notification
 
 ## 📡 API Endpoints
 
-| Method   | Endpoint                       | Description                                                                                   |
-| -------- | ------------------------------ | --------------------------------------------------------------------------------------------- |
-| GET      | `/`                            | Public landing page                                                                           |
-| GET      | `/dashboard`                   | Authenticated user risk dashboard                                                             |
-| GET      | `/telemetry`                   | Public live regional risk board                                                               |
-| GET      | `/register` / POST             | Create citizen account                                                                        |
-| GET      | `/login` / POST                | Authenticate                                                                                  |
-| GET      | `/logout`                      | Clear session                                                                                 |
-| GET/POST | `/profile`                     | View & edit your profile (name, phone, county, password) — citizens and admins                |
-| GET/POST | `/subscribe`                   | Configure alert channels & manage trial                                                       |
-| GET      | `/unsubscribe`                 | Email opt-out                                                                                 |
-| GET/POST | `/unsubscribe/reason`          | Collect unsubscribe feedback                                                                  |
-| GET      | `/api/v1/health`               | System health check                                                                           |
-| GET      | `/api/v1/risk-status?county=X` | Live composite risk for a county                                                              |
-| GET      | `/api/v1/alerts/history`       | Latest risk record per covered county                                                         |
-| GET      | `/api/v1/live-summary`         | Public live risk signals for the landing card (drought %, disease %, hidden pattern, status)  |
-| GET      | `/api/v1/telemetry/refresh`    | Public refresh — recomputes risk for all counties (no login) and returns fresh board/averages |
-| POST     | `/api/v1/mpesa/callback`       | Safaricom Daraja payment webhook                                                              |
-| POST     | `/api/v1/sms/callback`         | Africa's Talking inbound SMS webhook (STOP / reasons)                                         |
-| GET      | `/api/v1/check-trial-expiry`   | Cron-friendly trial expiration sweeper                                                        |
-| GET      | `/admin`                       | Admin workspace overview (admin-only)                                                         |
-| GET      | `/admin/reports`               | Admin PDF report generation hub (admin-only)                                                  |
-| GET      | `/admin/sms-delivery`          | Realtime SMS/email dispatch debugging console, auto-refreshing (admin-only)                   |
-| GET      | `/api/v1/admin/sms-delivery`   | Latest SMS delivery attempts (status, AT status, cost, message id, errors) — admin-only       |
-| GET      | `/api/v1/admin/dispatch-logs`  | Latest tracked SMS/email dispatches (recipient, message, subscription status) — admin-only    |
-| GET      | `/admin/analytics`             | Admin system analytics & risk analysis (admin-only)                                           |
-| GET      | `/admin/reports/<type>/pdf`    | Download a specific PDF report (admin-only)                                                   |
+| Method   | Endpoint                       | Description                                                                                  |
+| -------- | ------------------------------ | -------------------------------------------------------------------------------------------- |
+| GET      | `/`                            | Public landing page                                                                          |
+| GET      | `/dashboard`                   | Authenticated user risk dashboard                                                            |
+| GET      | `/telemetry`                   | Public live regional risk board                                                              |
+| GET      | `/register` / POST             | Create citizen account                                                                       |
+| GET      | `/login` / POST                | Authenticate                                                                                 |
+| GET      | `/logout`                      | Clear session                                                                                |
+| GET/POST | `/profile`                     | View & edit your profile (name, phone, county, password) — citizens and admins               |
+| GET/POST | `/subscribe`                   | Configure alert channels & manage trial                                                      |
+| GET      | `/unsubscribe`                 | Email opt-out                                                                                |
+| GET/POST | `/unsubscribe/reason`          | Collect unsubscribe feedback                                                                 |
+| GET      | `/api/v1/health`               | System health check                                                                          |
+| GET      | `/api/v1/risk-status?county=X` | Live composite risk for a county                                                             |
+| GET      | `/api/v1/alerts/history`       | Latest risk record per covered county                                                        |
+| GET      | `/api/v1/live-summary`         | Public live risk signals for the landing card (drought %, disease %, hidden pattern, status) |
+| GET      | `/api/v1/telemetry/refresh`    | Public refresh — re-reads latest persisted risk records (cheap, no ingestion/ML recompute)   |
+| POST     | `/api/v1/mpesa/callback`       | Safaricom Daraja payment webhook                                                             |
+| POST     | `/api/v1/sms/callback`         | Africa's Talking inbound SMS webhook (STOP / reasons)                                        |
+| GET      | `/api/v1/check-trial-expiry`   | Cron-friendly trial expiration sweeper                                                       |
+| GET      | `/admin`                       | Admin workspace overview (admin-only)                                                        |
+| GET      | `/admin/reports`               | Admin PDF report generation hub (admin-only)                                                 |
+| GET      | `/admin/sms-delivery`          | Realtime SMS/email dispatch debugging console, auto-refreshing (admin-only)                  |
+| GET      | `/api/v1/admin/sms-delivery`   | Latest SMS delivery attempts (status, AT status, cost, message id, errors) — admin-only      |
+| GET      | `/api/v1/admin/dispatch-logs`  | Latest tracked SMS/email dispatches (recipient, message, subscription status) — admin-only   |
+| GET      | `/admin/analytics`             | Admin system analytics & risk analysis (admin-only)                                          |
+| GET      | `/admin/reports/<type>/pdf`    | Download a specific PDF report (admin-only)                                                  |
 
 ---
 
@@ -311,12 +327,12 @@ AthGad AI includes a role-based **Admin Workspace** for authorized administrator
 
 Reports are generated live with **ReportLab** (`services/pdf_report_service.py`) and reflect the current system state at download time:
 
-| Report                                            | Contents                                                                                                                                              |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Predicted Calamities** (`predicted_calamities`) | Predicted calamity for all 8 counties, dynamic mitigation actions per county, risk level/score, and the date & time each prediction was produced.     |
-| **Disease Outbreaks** (`disease_outbreaks`)       | Predicted disease outbreaks (e.g. Malaria, Cholera) per county with reported cases and recommended preventive measures.                               |
-| **Subscribed Members** (`subscribed_members`)     | Currently subscribed members with their names and subscription date & time.                                                                           |
-| **Unsubscribed Members** (`unsubscribed_members`) | Unsubscribed members with their reasons for unsubscription (channel + reason) and the subscription period expressed in days, weeks, months, or years. |
+| Report                                            | Contents                                                                                                                                                 |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Predicted Calamities** (`predicted_calamities`) | Predicted calamity for all 8 counties, dynamic mitigation actions per county, risk level/score, and the date & time each prediction was produced.        |
+| **Disease Outbreaks** (`disease_outbreaks`)       | Predicted disease outbreaks (e.g. Malaria, Cholera) per county with reported cases and recommended preventive measures.                                  |
+| **Subscribed Members** (`subscribed_members`)     | Currently subscribed members with their names and subscription date & time.                                                                              |
+| **Unsubscribed Members** (`unsubscribed_members`) | Unsubscribed members with their reasons for unsubscription (channel + reason) and the subscription period expressed in days, weeks, months, or years.    |
 | **Alert Dispatch Logs** (`alert_dispatch_logs`)   | Every tracked SMS/email dispatch — recipient (phone number or email), the exact message sent, subscription status at dispatch time, and delivery result. |
 
 All PDF downloads are recorded in the audit log.
@@ -369,9 +385,19 @@ AthGad-ai/
 │   ├── pdf_report_service.py       # ReportLab PDF report generator
 │   └── space_weather_ingestion.py  # NOAA Kp-index fetcher
 ├── static/
+│   ├── css/
+│   │   ├── style.css               # Tailwind-replicated utility classes
+│   │   └── admin.css               # Shared admin workspace styles
 │   └── js/
 │       ├── chart.umd.min.js        # Chart.js 4.4.1 bundled locally (no CDN)
-│       └── dashboard.js            # Dashboard chart & API interactions
+│       ├── dashboard.js            # Dashboard chart & API interactions
+│       ├── admin-dashboard.js      # Admin overview risk-trend chart
+│       ├── admin-sms-console.js    # Realtime SMS/email dispatch console
+│       ├── landing.js              # Landing page live risk card + farewell popup
+│       ├── flash-alerts.js         # Auto-dismiss flash alerts
+│       ├── password-toggle.js      # Show/hide password toggles
+│       ├── profile.js              # Profile form validation + delete modal
+│       └── telemetry.js            # Public telemetry board filters + refresh
 ├── templates/
 │   ├── _logo.html                  # Shared logo partial
 │   ├── index.html                  # Authenticated dashboard
@@ -387,7 +413,7 @@ AthGad-ai/
 │   ├── reports.html            # PDF report hub
 │   ├── sms_delivery.html       # Realtime SMS/email dispatch debugging console
 │   └── analytics.html          # System analytics & charts
-└── TODO.md                         # Refactor tracker & improvement ideas
+└── tests/                          # pytest suite (routes, security, M-PESA, etc.)
 ```
 
 ---

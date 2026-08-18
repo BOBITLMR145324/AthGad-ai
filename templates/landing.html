@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AthGad AI - Early Warnings for Eastern Kenya</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/style.css?v={{ asset_version }}" />
   </head>
   <body
     class="bg-slate-950 text-slate-100 font-sans antialiased min-h-screen flex flex-col justify-between"
@@ -44,7 +45,7 @@
           <span
             class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/50 text-emerald-400 border border-emerald-900/60"
           >
-            🚀 Live in Eastern Kenya (Q2 2026)
+            🚀 Eastern Kenya region
           </span>
           <h1
             class="text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight"
@@ -196,52 +197,10 @@
       }
     </style>
 
-    <script>
-      // Show the sorrowful farewell popup after account deletion, then fade it
-      // out 3 seconds later.
-      document.addEventListener("DOMContentLoaded", function () {
-        var params = new URLSearchParams(window.location.search);
-        if (!params.get("account_deleted")) return;
-
-        var popup = document.getElementById("farewell-popup");
-        popup.style.display = "flex";
-
-        setTimeout(function () {
-          popup.classList.add("fading");
-          setTimeout(function () {
-            popup.style.display = "none";
-          }, 1000);
-        }, 3000);
-      });
-    </script>
-
-    <script>
-      // Populate the Live Risk Signals card with processed telemetry data.
-      document.addEventListener("DOMContentLoaded", function () {
-        fetch("/api/v1/live-summary")
-          .then(function (res) {
-            return res.json();
-          })
-          .then(function (data) {
-            if (data.status !== "ok") return;
-
-            var drought = document.getElementById("risk-drought");
-            var disease = document.getElementById("risk-disease");
-            var pattern = document.getElementById("risk-pattern");
-            var status = document.getElementById("risk-status");
-
-            if (drought) drought.textContent = data.avg_climate + "%";
-            if (disease) disease.textContent = data.avg_health + "%";
-            if (pattern) {
-              pattern.textContent = data.hidden_pattern;
-              pattern.className = data.hidden_pattern_color;
-            }
-            if (status) status.textContent = "● " + data.system_status;
-          })
-          .catch(function () {
-            // Leave the default "Connected" status if the API is unavailable.
-          });
-      });
-    </script>
+    <!-- The landing.js file handles both the farewell popup and the live risk
+         signals card fetch. The previous duplicate inline script (which also
+         fired a second /api/v1/live-summary request on every page load) has
+         been removed. -->
+    <script src="/static/js/landing.js?v={{ asset_version }}"></script>
   </body>
 </html>

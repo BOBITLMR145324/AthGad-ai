@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Profile - AthGad AI</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/style.css?v={{ asset_version }}" />
   </head>
   <body class="bg-slate-900 text-slate-100 font-sans min-h-screen">
     {% if session.get('user_role') == 'admin' %}
@@ -164,7 +165,9 @@
             <div
               class="w-24 h-24 rounded-full bg-emerald-600/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 text-3xl font-black"
             >
-              {{ profile.full_name[:1] | upper }}{{ profile.full_name.split()[-1][:1] | upper if profile.full_name.split() | length > 1 else '' }}
+              {{ profile.full_name[:1] | upper }}{{
+              profile.full_name.split()[-1][:1] | upper if
+              profile.full_name.split() | length > 1 else '' }}
             </div>
             <h2 class="text-xl font-black text-white mt-4">
               {{ profile.full_name }}
@@ -187,9 +190,7 @@
               Account Details
             </h3>
             <div>
-              <p
-                class="text-[10px] text-slate-500 uppercase tracking-wider"
-              >
+              <p class="text-[10px] text-slate-500 uppercase tracking-wider">
                 User Code
               </p>
               <p class="text-sm font-mono text-slate-200 mt-0.5">
@@ -197,19 +198,16 @@
               </p>
             </div>
             <div>
-              <p
-                class="text-[10px] text-slate-500 uppercase tracking-wider"
-              >
+              <p class="text-[10px] text-slate-500 uppercase tracking-wider">
                 Member Since
               </p>
               <p class="text-sm text-slate-200 mt-0.5">
-                {{ profile.registered_at.strftime('%B %d, %Y') if profile.registered_at else '—' }}
+                {{ profile.registered_at.strftime('%B %d, %Y') if
+                profile.registered_at else '—' }}
               </p>
             </div>
             <div>
-              <p
-                class="text-[10px] text-slate-500 uppercase tracking-wider"
-              >
+              <p class="text-[10px] text-slate-500 uppercase tracking-wider">
                 Alert Status
               </p>
               <p class="text-sm text-slate-200 mt-0.5">
@@ -217,9 +215,10 @@
                 <span class="text-emerald-400 font-semibold">Subscribed</span>
                 {% else %}
                 <span class="text-slate-400">Not subscribed</span>
-                {% endif %}
-                {% if profile.payment_status %}
-                <span class="text-slate-500">({{ profile.payment_status }})</span>
+                {% endif %} {% if profile.payment_status %}
+                <span class="text-slate-500"
+                  >({{ profile.payment_status }})</span
+                >
                 {% endif %}
               </p>
             </div>
@@ -298,7 +297,7 @@
                 >
                   <option value="">Select your county</option>
                   {% for county in covered_counties %}
-                  <option value="{{ county }}" {% if profile.county == county %}selected{% endif %}>
+                  <option value="{{ county }}" {{ 'selected' if profile.county == county else '' }}>
                     {{ county }} County
                   </option>
                   {% endfor %}
@@ -333,7 +332,12 @@
               </p>
             </div>
 
-            <form action="/profile" method="POST" class="space-y-4" id="password-form">
+            <form
+              action="/profile"
+              method="POST"
+              class="space-y-4"
+              id="password-form"
+            >
               <input
                 type="hidden"
                 name="csrf_token"
@@ -359,41 +363,164 @@
                   class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
                   >Current Password</label
                 >
-                <input
-                  type="password"
-                  name="current_password"
-                  autocomplete="current-password"
-                  placeholder="••••••••"
-                  class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
-                />
+                <div class="relative password-wrapper">
+                  <input
+                    type="password"
+                    name="current_password"
+                    autocomplete="current-password"
+                    placeholder="••••••••"
+                    class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 pr-10 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
+                  />
+                  <button
+                    type="button"
+                    class="js-toggle-password password-toggle"
+                    aria-label="Show password"
+                  >
+                    <svg
+                      class="eye-open"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"
+                      />
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                    </svg>
+                    <svg
+                      class="eye-closed hidden"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"
+                      />
+                    </svg>
+                  </button>
+                </div>
               </div>
               <div>
                 <label
                   class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
                   >New Password</label
                 >
-                <input
-                  type="password"
-                  name="new_password"
-                  minlength="8"
-                  autocomplete="new-password"
-                  placeholder="At least 8 characters"
-                  class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
-                />
+                <div class="relative password-wrapper">
+                  <input
+                    type="password"
+                    name="new_password"
+                    minlength="8"
+                    autocomplete="new-password"
+                    placeholder="At least 8 characters"
+                    class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 pr-10 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
+                  />
+                  <button
+                    type="button"
+                    class="js-toggle-password password-toggle"
+                    aria-label="Show password"
+                  >
+                    <svg
+                      class="eye-open"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"
+                      />
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                    </svg>
+                    <svg
+                      class="eye-closed hidden"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"
+                      />
+                    </svg>
+                  </button>
+                </div>
               </div>
               <div>
                 <label
                   class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
                   >Confirm New Password</label
                 >
-                <input
-                  type="password"
-                  name="confirm_password"
-                  minlength="8"
-                  autocomplete="new-password"
-                  placeholder="Re-enter new password"
-                  class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
-                />
+                <div class="relative password-wrapper">
+                  <input
+                    type="password"
+                    name="confirm_password"
+                    minlength="8"
+                    autocomplete="new-password"
+                    placeholder="Re-enter new password"
+                    class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 pr-10 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition"
+                  />
+                  <button
+                    type="button"
+                    class="js-toggle-password password-toggle"
+                    aria-label="Show password"
+                  >
+                    <svg
+                      class="eye-open"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"
+                      />
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                    </svg>
+                    <svg
+                      class="eye-closed hidden"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"
+                      />
+                    </svg>
+                  </button>
+                </div>
               </div>
               <button
                 type="submit"
@@ -415,8 +542,8 @@
                 Danger Zone
               </h3>
               <p class="text-[11px] text-slate-500 mt-1">
-                Permanently delete your account and every record tied to it
-                from the database. This action cannot be undone.
+                Permanently delete your account and every record tied to it from
+                the database. This action cannot be undone.
               </p>
             </div>
             <button
@@ -459,8 +586,8 @@
         </div>
         <p class="text-sm text-slate-400 leading-relaxed">
           This will permanently erase your account, subscription status and all
-          related records from the system's database. Once deleted, this
-          cannot be undone.
+          related records from the system's database. Once deleted, this cannot
+          be undone.
         </p>
         <form
           action="/profile/delete"
@@ -468,24 +595,61 @@
           id="delete-account-form"
           class="space-y-4"
         >
-          <input
-            type="hidden"
-            name="csrf_token"
-            value="{{ csrf_token() }}"
-          />
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
           <div>
             <label
               class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
               >Enter your password to confirm</label
             >
-            <input
-              type="password"
-              name="password"
-              id="delete-password"
-              autocomplete="current-password"
-              placeholder="Your current password"
-              class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-rose-500 transition"
-            />
+            <div class="relative password-wrapper">
+              <input
+                type="password"
+                name="password"
+                id="delete-password"
+                autocomplete="current-password"
+                placeholder="Your current password"
+                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 pr-10 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-rose-500 transition"
+              />
+              <button
+                type="button"
+                class="js-toggle-password password-toggle"
+                aria-label="Show password"
+              >
+                <svg
+                  class="eye-open"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width="1.5"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"
+                  />
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                </svg>
+                <svg
+                  class="eye-closed hidden"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width="1.5"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
           <div class="flex gap-3">
             <button
@@ -527,126 +691,8 @@
       }
     </style>
 
-    <script>
-      document.addEventListener("DOMContentLoaded", function () {
-        // Fade out flash messages linearly within 3 seconds, then remove them.
-        var flashMessages = document.querySelectorAll(".flash-message");
-        flashMessages.forEach(function (msg) {
-          setTimeout(function () {
-            msg.classList.add("fading");
-            setTimeout(function () {
-              msg.style.display = "none";
-            }, 3000);
-          }, 500);
-        });
+    <script src="/static/js/profile.js?v={{ asset_version }}"></script>
 
-        // Prompt to validate the existing password before changing it.
-        var passwordForm = document.getElementById("password-form");
-        if (passwordForm) {
-          passwordForm.addEventListener("submit", function (event) {
-            var currentPassword = passwordForm.querySelector(
-              'input[name="current_password"]'
-            ).value;
-            var newPassword = passwordForm.querySelector(
-              'input[name="new_password"]'
-            ).value;
-            var confirmPassword = passwordForm.querySelector(
-              'input[name="confirm_password"]'
-            ).value;
-
-            if (!currentPassword && !newPassword && !confirmPassword) {
-              event.preventDefault();
-              alert(
-                "Please fill in all the fields to update the password."
-              );
-              passwordForm
-                .querySelector('input[name="current_password"]')
-                .focus();
-              return;
-            }
-
-            if (newPassword || confirmPassword) {
-              if (!currentPassword) {
-                event.preventDefault();
-                alert(
-                  "Please enter your current password to validate before changing your password."
-                );
-                passwordForm
-                  .querySelector('input[name="current_password"]')
-                  .focus();
-                return;
-              }
-              if (newPassword.length < 8) {
-                event.preventDefault();
-                alert("Your new password must be at least 8 characters long.");
-                passwordForm
-                  .querySelector('input[name="new_password"]')
-                  .focus();
-                return;
-              }
-              if (newPassword !== confirmPassword) {
-                event.preventDefault();
-                alert("The new passwords you entered do not match.");
-                passwordForm
-                  .querySelector('input[name="confirm_password"]')
-                  .focus();
-                return;
-              }
-            } else if (currentPassword) {
-              event.preventDefault();
-              alert("Please enter and confirm your new password first.");
-              passwordForm
-                .querySelector('input[name="new_password"]')
-                .focus();
-            }
-          });
-        }
-
-        // Danger zone: open/close the account-deletion confirmation modal.
-        var deleteBtn = document.getElementById("delete-account-btn");
-        var deleteModal = document.getElementById("delete-modal");
-        var cancelDeleteBtn = document.getElementById("cancel-delete-btn");
-        var deleteForm = document.getElementById("delete-account-form");
-        var deletePassword = document.getElementById("delete-password");
-
-        if (deleteBtn && deleteModal) {
-          deleteBtn.addEventListener("click", function () {
-            deleteModal.style.display = "flex";
-            if (deletePassword) deletePassword.focus();
-          });
-        }
-        if (cancelDeleteBtn && deleteModal) {
-          cancelDeleteBtn.addEventListener("click", function () {
-            deleteModal.style.display = "none";
-          });
-        }
-        if (deleteModal) {
-          deleteModal.addEventListener("click", function (event) {
-            if (event.target === deleteModal) {
-              deleteModal.style.display = "none";
-            }
-          });
-        }
-        if (deleteForm) {
-          deleteForm.addEventListener("submit", function (event) {
-            if (!deletePassword || !deletePassword.value) {
-              event.preventDefault();
-              alert(
-                "Please enter your password to confirm account deletion."
-              );
-              deletePassword.focus();
-              return;
-            }
-            var confirmed = confirm(
-              "This will permanently delete your account and all your data. " +
-                "This cannot be undone. Continue?"
-            );
-            if (!confirmed) {
-              event.preventDefault();
-            }
-          });
-        }
-      });
-    </script>
+    <script src="/static/js/password-toggle.js?v={{ asset_version }}"></script>
   </body>
 </html>

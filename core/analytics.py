@@ -1,6 +1,7 @@
 import hashlib
 import os
 import sys
+import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -8,8 +9,11 @@ from sklearn.ensemble import IsolationForest
 from core.db_helper import get_db_engine
 from sqlalchemy import text
 from core.id_codes import new_alert_code
+from core.county_registry import proactive_actions_for_risk
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +103,7 @@ class AthGadAnalyticsEngine:
             engine = get_db_engine()
             return pd.read_sql_query(text(query), engine, params=params)
         except Exception as e:
-            print(f"Analytics read warning (query): {e}")
+            logger.warning("Analytics read warning (query): %s", e)
             return pd.DataFrame()
 
     def fetch_historical_baseline(self, county: str, days=30) -> pd.DataFrame:
@@ -245,7 +249,7 @@ class AthGadAnalyticsEngine:
         return (num - 0.5) * 0.10
 
     def forecast_risk(self, county: str = "Kitui", horizon: int = 7,
-                      start_offset: int = 1) -> dict:
+                      start_offset: int = 1, df: pd.DataFrame = None) -> dict:
         """
         Projects the composite risk score forward over `horizon` days using
         exponential smoothing plus a linear trend on each normalized feature,
@@ -254,9 +258,16 @@ class AthGadAnalyticsEngine:
 
         `start_offset` selects the first forecast day relative to today
         (1 = tomorrow, 0 = today).
-        Returns a dict with per-day forecast scores and a trend direction.
+        `df` is an optional pre-fetched historical baseline DataFrame. When
+        provided it is reused (avoiding a redundant 30-day DB read when the
+        caller already fetched the data for the composite-risk computation).
+
+        Returns a dict with per-day forecast scores, a trend direction, and
+        proactive mitigation actions for the predicted risk level so every
+        future prediction carries actionable advice.
         """
-        df = self.fetch_historical_baseline(county=county, days=30)
+        if df is None:
+            df = self.fetch_historical_baseline(county=county, days=30)
         if df is None or df.empty:
             return {"scores": [], "trend": "stable", "method": "exponential-smoothing"}
 
@@ -331,6 +342,16 @@ class AthGadAnalyticsEngine:
         else:
             trend = "stable"
 
+        # Derive the predicted risk level from the final forecast point so the
+        # proactive actions match the future risk trajectory, not just today.
+        final_score = forecasts[-1] if forecasts else base_score
+        if final_score < 0.35:
+            predicted_level = "Low"
+        elif final_score < 0.70:
+            predicted_level = "Medium"
+        else:
+            predicted_level = "High"
+
         return {
             "horizon_days": horizon,
             "start_offset": start_offset,
@@ -338,6 +359,8 @@ class AthGadAnalyticsEngine:
             "trend": trend,
             "method": "exponential-smoothing+linear-trend+modulation",
             "baseline_score": round(base_score, 3),
+            "predicted_risk_level": predicted_level,
+            "proactive_actions": proactive_actions_for_risk(county, predicted_level),
         }
 
     def calculate_composite_risk(self, county: str = "Kitui") -> dict:
@@ -346,7 +369,10 @@ class AthGadAnalyticsEngine:
         Combines individual metrics, normalizes them, and aggregates a localized score.
         Also attaches a non-breaking `forecast` trajectory block.
         """
-        df = self.fetch_historical_baseline(county=county, days=14)
+        # Fetch a single 30-day baseline and reuse it for both the composite
+        # risk computation and the 7-day forecast, avoiding 3 redundant SQL
+        # queries per risk evaluation.
+        df = self.fetch_historical_baseline(county=county, days=30)
         anomaly_array = self.compute_anomaly_scores(df, county=county)
 
         latest_anomaly_severity = anomaly_array[-1] if len(anomaly_array) > 0 else 0.1
@@ -377,11 +403,13 @@ class AthGadAnalyticsEngine:
         else:
             risk_level = "High"
 
-        # Attach a forecast trajectory (non-breaking) — loophole #4
+        # Attach a forecast trajectory (non-breaking) — loophole #4.
+        # The already-fetched 30-day DataFrame is passed in so the forecast
+        # does not re-query the database.
         try:
-            forecast = self.forecast_risk(county=county, horizon=7)
+            forecast = self.forecast_risk(county=county, horizon=7, df=df)
         except Exception as e:
-            print(f"Forecast warning ({county}): {e}")
+            logger.warning("Forecast warning (%s): %s", county, e)
             forecast = {"horizon_days": 7, "scores": [], "trend": "stable", "method": "exponential-smoothing"}
 
         result_payload = {
@@ -424,7 +452,7 @@ class AthGadAnalyticsEngine:
                     "level": level,
                     "county": county,
                 })
-                print(f"Database Alert Sync: Record saved to 'risk_alerts' for {county} successfully via SQLAlchemy.")
+                logger.info("Database Alert Sync: Record saved to 'risk_alerts' for %s successfully via SQLAlchemy.", county)
 
                 if level in ["Medium", "High"]:
                     connection.execute(text("""
@@ -433,11 +461,42 @@ class AthGadAnalyticsEngine:
                         WHERE county = :county AND risk_level = :level AND timestamp >= NOW() - (INTERVAL '1 minute');
                     """), {"county": county, "level": level})
 
+            # Keep the table bounded even on compute paths that never call the
+            # admin prune (risk-status, live-summary fallbacks). Cheap, throttled
+            # prune every N inserts so hot paths don't pay a DELETE each time.
+            _maybe_prune_risk_alerts(keep_days=30)
+
         except Exception as e:
-            print(f"Database Logging Error: {e}")
+            logger.error("Database Logging Error: %s", e)
 
 
 if __name__ == "__main__":
     engine = AthGadAnalyticsEngine()
     analysis_output = engine.calculate_composite_risk("Kitui")
     print("\nCleaned AI Core Execution Output Payload:\n", analysis_output)
+
+
+# ---------------------------------------------------------------------------
+# Risk-alert table pruning (throttled)
+# ---------------------------------------------------------------------------
+_prune_insert_count = 0
+
+
+def _maybe_prune_risk_alerts(keep_days: int = 30, every: int = 20):
+    """
+    Deletes risk_alerts rows older than `keep_days` days. Called from
+    _log_alert_to_db (every compute path) but only runs the DELETE every `every`
+    inserts so the bounded-size cleanup is effectively free on hot paths.
+    """
+    global _prune_insert_count
+    _prune_insert_count += 1
+    if _prune_insert_count % every != 0:
+        return
+    try:
+        with get_db_engine().begin() as conn:
+            conn.execute(text("""
+                DELETE FROM risk_alerts
+                WHERE timestamp < NOW() - make_interval(days => :days)
+            """), {"days": keep_days})
+    except Exception as e:
+        logger.warning("Risk alert prune warning: %s", e)

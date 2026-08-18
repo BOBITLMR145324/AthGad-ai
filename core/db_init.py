@@ -397,9 +397,14 @@ def initialize_database():
                 county VARCHAR(50) NOT NULL,
                 calculated_score NUMERIC(4,3) NOT NULL,
                 risk_level VARCHAR(15) NOT NULL,
-                notified BOOLEAN DEFAULT FALSE
+                notified BOOLEAN DEFAULT FALSE,
+                dispatched BOOLEAN DEFAULT FALSE  -- set TRUE when SMS/email dispatch has run for this row
             );
         """)
+        # 6a. Dispatch-dedup column for existing databases (idempotent).
+        # Tracks whether a Medium/High alert for a county+level has already been
+        # dispatched so repeat /api/v1/risk-status polls do not re-notify users.
+        cursor.execute("ALTER TABLE risk_alerts ADD COLUMN IF NOT EXISTS dispatched BOOLEAN DEFAULT FALSE;")
 
         # 6b. SMS Delivery Reports Table
         # Records every outbound SMS attempt and its Africa's Talking outcome so
@@ -438,6 +443,24 @@ def initialize_database():
                 subscription_status VARCHAR(30) DEFAULT 'unknown',  -- premium / baseline / none
                 status VARCHAR(20) NOT NULL,           -- SUCCESS / FAILED / SIMULATED
                 error_detail VARCHAR(500)
+            );
+        """)
+
+        # 6d. M-PESA STK Payment Tracking Table
+        # Records every STK push we initiate so the callback webhook can verify
+        # the CheckoutRequestID, amount, phone, and replay state before marking
+        # a user as paid. Prevents forged callbacks from activating premium.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS mpesa_stk_requests (
+                id SERIAL PRIMARY KEY,
+                checkout_id VARCHAR(100) NOT NULL UNIQUE,
+                user_email VARCHAR(255) NOT NULL,
+                phone_number VARCHAR(20) NOT NULL,
+                amount NUMERIC(10, 0) NOT NULL,
+                status VARCHAR(20) DEFAULT 'pending',  -- pending / success / failed
+                initiated_at TIMESTAMP DEFAULT NOW(),
+                completed_at TIMESTAMP,
+                mpesa_receipt VARCHAR(40)
             );
         """)
 

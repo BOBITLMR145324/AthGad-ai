@@ -1,9 +1,12 @@
 import os
 import sys
+import logging
 import httpx
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logger = logging.getLogger(__name__)
 
 # Storage pipeline (wired lazily in __main__ to avoid a hard import-time
 # dependency and keep the ingestion services importable in any context).
@@ -21,22 +24,27 @@ class SpaceWeatherIngestionService:
     def fetch_geomagnetic_indices(self) -> list:
         """
         Pulls real-time 1-minute tracking interval planetary Kp-indices.
+        Returns the latest records covering roughly a 30-day window so the
+        analytics engine's observation vector is populated with real data
+        instead of falling back to deterministic baselines.
         """
         try:
-            print(f"[{datetime.now()}] Ingesting Solar Dynamics data fields from NOAA SWPC...")
+            logger.info("Ingesting Solar Dynamics data fields from NOAA SWPC...")
             response = httpx.get(self.api_url, timeout=15.0)
             
             if response.status_code == 200:
                 all_records = response.json()
-                # Return the latest 5 timeline records for staging window verification
-                print(f"Space Weather Engine: Ingested {len(all_records)} structural array elements.")
-                return all_records[-5:]
+                # The NOAA endpoint returns ~1 record per 3 hours. A 30-day
+                # window is ~240 records; keep the latest 240 so the analytics
+                # engine has a full month of real geomagnetic data.
+                logger.info("Space Weather Engine: Ingested %d structural array elements.", len(all_records))
+                return all_records[-240:]
             else:
-                print(f"Space Weather Ingestion Failure: Server status code {response.status_code}")
+                logger.warning("Space Weather Ingestion Failure: Server status code %s", response.status_code)
                 return []
                 
         except httpx.RequestError as exc:
-            print(f"An infrastructure transmission exception occurred while requesting {exc.request.url!r}.")
+            logger.error("An infrastructure transmission exception occurred while requesting %r.", exc.request.url)
             return []
 
 

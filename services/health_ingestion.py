@@ -3,11 +3,16 @@ import os
 import json
 import hashlib
 import random
+import logging
 from datetime import datetime, timedelta
 
 import httpx
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core.county_registry import COVERED_COUNTIES
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +69,7 @@ class SyntheticHealthProvider(HealthDataProvider):
     source = "synthetic"
 
     def __init__(self, target_counties=None, diseases=None):
-        self.target_counties = target_counties or [
-            "Machakos", "Kitui", "Makueni", "Marsabit",
-            "Isiolo", "Meru", "Tharaka-Nithi", "Embu",
-        ]
+        self.target_counties = target_counties or list(COVERED_COUNTIES)
         self.diseases = diseases or FORECASTABLE_DISEASES
 
     def _seed_for(self, county: str, disease: str, week_key: str) -> int:
@@ -76,31 +78,40 @@ class SyntheticHealthProvider(HealthDataProvider):
         return int(hashlib.sha256(raw).hexdigest(), 16) % (2 ** 32)
 
     def generate_weekly_surveillance_payload(self) -> str:
-        """Generates a deterministic weekly surveillance snapshot (JSON string)."""
+        """
+        Generates a deterministic surveillance snapshot (JSON string) covering
+        the past 30 days so the analytics engine's observation vector is
+        populated with real per-county health data instead of falling back to
+        deterministic baselines. Each day is seeded by (county, disease, date)
+        so repeated runs produce identical payloads.
+        """
         payload = []
         current_date = datetime.now()
-        week_key = current_date.strftime("%Y-%W")
 
-        for county in self.target_counties:
-            for disease in self.diseases:
-                lo, hi = DISEASE_BASELINES.get(disease, (0, 10))
-                rng = random.Random(self._seed_for(county, disease, week_key))
-                base_cases = rng.randint(lo, hi)
+        for day_offset in range(30):
+            day = current_date - timedelta(days=day_offset)
+            day_key = day.strftime("%Y-%m-%d")
 
-                # Occasional structural spike (10% chance) to exercise anomaly
-                # detection — also deterministic thanks to the seeded RNG.
-                if rng.random() < 0.10:
-                    base_cases *= rng.randint(4, 8)
+            for county in self.target_counties:
+                for disease in self.diseases:
+                    lo, hi = DISEASE_BASELINES.get(disease, (0, 10))
+                    rng = random.Random(self._seed_for(county, disease, day_key))
+                    base_cases = rng.randint(lo, hi)
 
-                record = {
-                    "timestamp": current_date.strftime("%Y-%m-%d %H:%M:%S"),
-                    "county": county,
-                    "disease_type": disease,
-                    "reported_cases": base_cases,
-                    "facility_reporting_rate_pct": round(rng.uniform(85.0, 99.9), 1),
-                    "source": self.source,
-                }
-                payload.append(record)
+                    # Occasional structural spike (10% chance) to exercise
+                    # anomaly detection — also deterministic via the seeded RNG.
+                    if rng.random() < 0.10:
+                        base_cases *= rng.randint(4, 8)
+
+                    record = {
+                        "timestamp": day.strftime("%Y-%m-%d %H:%M:%S"),
+                        "county": county,
+                        "disease_type": disease,
+                        "reported_cases": base_cases,
+                        "facility_reporting_rate_pct": round(rng.uniform(85.0, 99.9), 1),
+                        "source": self.source,
+                    }
+                    payload.append(record)
 
         return json.dumps(payload, indent=4)
 
@@ -164,13 +175,13 @@ class MinistryHealthProvider(HealthDataProvider):
         try:
             resp = httpx.get(url, headers=headers, timeout=20.0)
             if resp.status_code != 200:
-                print(f"MinistryHealthProvider: API returned status {resp.status_code}")
+                logger.warning("MinistryHealthProvider: API returned status %s", resp.status_code)
                 return []
             data = resp.json()
             rows = data if isinstance(data, list) else data.get("data", data.get("records", []))
             return [self._normalize_row(r) for r in rows if r.get("county")]
         except Exception as e:
-            print(f"MinistryHealthProvider: API fetch error: {e}")
+            logger.error("MinistryHealthProvider: API fetch error: %s", e)
             return []
 
     def fetch_weekly_payload(self) -> list:
@@ -179,7 +190,7 @@ class MinistryHealthProvider(HealthDataProvider):
         else:
             rows = self._fetch_from_api()
         if not rows:
-            print(
+            logger.warning(
                 "MinistryHealthProvider: No records available. Falling back to "
                 "deterministic synthetic data for graceful degradation."
             )

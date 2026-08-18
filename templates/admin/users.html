@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Users - Admin Workspace</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/style.css?v={{ asset_version }}" />
   </head>
   <body class="bg-slate-950 text-slate-100 min-h-screen">
     <!-- Admin Header -->
@@ -148,7 +149,9 @@
                   <span class="text-xs">
                     {{ 'Subscribed' if user.is_subscribed else 'Unsubscribed' }}
                     {% if user.payment_status %}
-                    <span class="text-slate-500">({{ user.payment_status }})</span>
+                    <span class="text-slate-500"
+                      >({{ user.payment_status }})</span
+                    >
                     {% endif %}
                   </span>
                 </td>
@@ -157,8 +160,15 @@
                 </td>
                 <td class="py-3 px-6">
                   {% if user.role == 'admin' %}
-                  <form method="POST" action="/admin/users/{{ user.user_code }}/demote">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                  <form
+                    method="POST"
+                    action="/admin/users/{{ user.user_code }}/demote"
+                  >
+                    <input
+                      type="hidden"
+                      name="csrf_token"
+                      value="{{ csrf_token() }}"
+                    />
                     <button
                       type="submit"
                       class="cursor-pointer bg-slate-800 hover:bg-amber-600 text-slate-300 hover:text-white font-bold px-3 py-1.5 rounded-lg text-xs transition"
@@ -167,8 +177,15 @@
                     </button>
                   </form>
                   {% else %}
-                  <form method="POST" action="/admin/users/{{ user.user_code }}/promote">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                  <form
+                    method="POST"
+                    action="/admin/users/{{ user.user_code }}/promote"
+                  >
+                    <input
+                      type="hidden"
+                      name="csrf_token"
+                      value="{{ csrf_token() }}"
+                    />
                     <button
                       type="submit"
                       class="cursor-pointer bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white font-bold px-3 py-1.5 rounded-lg text-xs transition"

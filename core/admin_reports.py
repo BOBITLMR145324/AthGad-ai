@@ -1,4 +1,4 @@
-"""
+﻿"""
 core/admin_reports.py
 =====================
 Data-access helpers for the AthGad AI Admin Workspace.
@@ -11,16 +11,18 @@ Provides:
 """
 
 from datetime import datetime, timedelta
+import logging
 from sqlalchemy import text
 
-from core.county_registry import get_county_advisory
+from core.county_registry import (
+    get_county_advisory,
+    COVERED_COUNTIES,
+    threat_category_for,
+    calamity_for,
+)
 from core.analytics import AthGadAnalyticsEngine
 
-# The 8 Eastern Kenya counties covered by the early warning system.
-COVERED_COUNTIES = [
-    "Kitui", "Machakos", "Makueni", "Marsabit",
-    "Isiolo", "Meru", "Embu", "Tharaka-Nithi",
-]
+logger = logging.getLogger(__name__)
 
 
 def _parse_dt(value):
@@ -40,12 +42,23 @@ def _fmt_dt(value, fmt="%Y-%m-%d %H:%M"):
     return dt.strftime(fmt) if dt else "—"
 
 
+_ALLOWED_RANGE_COLUMNS = frozenset({
+    "timestamp",
+    "u.unsubscribed_at",
+    "dispatched_at",
+    "COALESCE(subscription_started_at, registered_at)",
+})
+
+
 def _range_where(column, date_from, date_to):
     """
     Builds (where_sql, params) for an inclusive date-range filter on `column`.
     date_from/date_to are datetime.date objects (or None). date_to is treated
     as inclusive by comparing against the start of the following day.
+    The `column` argument is allowlisted to prevent SQL injection.
     """
+    if column not in _ALLOWED_RANGE_COLUMNS:
+        raise ValueError(f"Unsafe range column: {column!r}")
     sql = ""
     params = {}
     if date_from is not None:
@@ -125,11 +138,9 @@ def get_predicted_calamities(engine, date_from=None, date_to=None):
         risk_level = record.risk_level
         timestamp = record.timestamp
 
-        # Determine the primary calamity the way the app does
-        if risk_level == "High" or county in ["Makueni", "Machakos", "Isiolo"]:
-            calamity = "Flash Floods, Severe Landslides & Waterborne Outbreaks"
-        else:
-            calamity = "Severe Multi-Season Drought & Agricultural Deficits"
+        # Determine the primary calamity via the centralized registry so the
+        # admin reports stay consistent with the telemetry board.
+        calamity = calamity_for(county, risk_level)
 
         advisory = get_county_advisory(county, calamity)
 
@@ -178,7 +189,7 @@ def get_disease_outbreaks(engine, date_from=None, date_to=None):
                 "timestamp": _fmt_dt(row.timestamp),
             })
     except Exception as e:
-        print(f"admin_reports: disease query warning: {e}")
+        logger.warning("admin_reports: disease query warning: %s", e)
         disease_map = {}
 
     items = []
@@ -201,16 +212,21 @@ def get_disease_outbreaks(engine, date_from=None, date_to=None):
 
 def get_subscribed_members(engine, date_from=None, date_to=None):
     """
-    Returns currently subscribed members (is_subscribed = True) with their
-    full name and subscription start time. `date_from`/`date_to` restrict the
-    list to members whose subscription started inside that date range.
+    Returns currently subscribed members with their full name, email, and
+    subscription start time. A member counts as "subscribed" when they have at
+    least one active alert channel (SMS or email), reflecting the real,
+    channel-aware subscription state rather than a stale global flag.
+
+    `date_from`/`date_to` restrict the list to members whose subscription
+    started inside that date range.
     """
     where_sql, params = _range_where(
         "COALESCE(subscription_started_at, registered_at)", date_from, date_to)
     query = text(f"""
-        SELECT full_name, email, subscription_started_at, registered_at
+        SELECT full_name, email, subscription_started_at, registered_at,
+               subscribe_sms, subscribe_email
         FROM users
-        WHERE is_subscribed = True
+        WHERE (subscribe_sms = True OR subscribe_email = True)
           AND role != 'admin'{where_sql}
         ORDER BY COALESCE(subscription_started_at, registered_at) DESC;
     """)
@@ -270,7 +286,7 @@ def get_report_snapshot(engine):
             except Exception:
                 pass
     except Exception as e:
-        print(f"admin_reports: report snapshot counts warning: {e}")
+        logger.warning("admin_reports: report snapshot counts warning: %s", e)
 
     try:
         with engine.connect() as conn:
@@ -284,7 +300,7 @@ def get_report_snapshot(engine):
             snapshot["prediction_counties"] = prediction_counties
             snapshot["high_risk_counties"] = high_risk
     except Exception as e:
-        print(f"admin_reports: report snapshot risk warning: {e}")
+        logger.warning("admin_reports: report snapshot risk warning: %s", e)
 
     return snapshot
 
@@ -301,7 +317,7 @@ def _ensure_unsubscriptions_email(engine):
                 "ALTER TABLE unsubscriptions ADD COLUMN IF NOT EXISTS email VARCHAR(120)"
             ))
     except Exception as e:
-        print(f"admin_reports: ensure unsubscriptions.email warning: {e}")
+        logger.warning("admin_reports: ensure unsubscriptions.email warning: %s", e)
 
 
 def get_unsubscribed_members(engine, date_from=None, date_to=None):
@@ -333,7 +349,7 @@ def get_unsubscribed_members(engine, date_from=None, date_to=None):
     except Exception as e:
         # Older databases may not have unsubscriptions.email yet. Apply the
         # idempotent migration and retry instead of failing the report.
-        print(f"admin_reports: unsubscribed query warning ({e}); applying email migration")
+        logger.warning("admin_reports: unsubscribed query warning (%s); applying email migration", e)
         _ensure_unsubscriptions_email(engine)
         with engine.connect() as conn:
             rows = conn.execute(query, params).fetchall()
@@ -388,7 +404,7 @@ def get_sms_delivery_logs(engine, limit: int = 100):
                 "error_detail": row.error_detail or "",
             })
     except Exception as e:
-        print(f"admin_reports: sms delivery logs warning: {e}")
+        logger.warning("admin_reports: sms delivery logs warning: %s", e)
     return logs
 
 
@@ -427,7 +443,7 @@ def get_alert_dispatch_logs(engine, limit: int = 500, date_from=None, date_to=No
                 "error_detail": row.error_detail or "",
             })
     except Exception as e:
-        print(f"admin_reports: alert dispatch logs warning: {e}")
+        logger.warning("admin_reports: alert dispatch logs warning: %s", e)
     return logs
 
 
@@ -447,7 +463,7 @@ def prune_risk_alerts(engine, keep_days: int = 30):
                 {"days": keep_days},
             )
     except Exception as e:
-        print(f"admin_reports: risk_alerts prune warning: {e}")
+        logger.warning("admin_reports: risk_alerts prune warning: %s", e)
 
 
 def _threat_for(county, risk_level):
@@ -455,10 +471,9 @@ def _threat_for(county, risk_level):
     Returns dynamic (threat_category, primary_threat) for a county based on its
     live risk level, mirroring the threat assignments used across the telemetry
     board so the admin analytics page stays consistent with the dashboard.
+    Delegates to the centralized registry so all pages share one classification.
     """
-    if risk_level == "High" or county in ["Marsabit", "Isiolo"]:
-        return "health", "Water Contamination & Vector Outbreak"
-    return "climate", "Rainfall Deficit & Soil Moisture Loss"
+    return threat_category_for(county, risk_level)
 
 
 def _resolve_county_risk(engine, county, analytics_engine, records=None):
@@ -491,7 +506,7 @@ def _resolve_county_risk(engine, county, analytics_engine, records=None):
             score_pct = round(raw * 100, 1) if raw <= 1.0 else round(raw, 1)
             level = live.get("risk_level", "Low")
         except Exception as e:
-            print(f"admin_reports: live risk fallback warning ({county}): {e}")
+            logger.warning("admin_reports: live risk fallback warning (%s): %s", county, e)
             score_pct = round(0.0, 1)
             level = "Low"
             live = None
@@ -509,15 +524,12 @@ def _resolve_county_risk(engine, county, analytics_engine, records=None):
         trend = forecast.get("trend", "stable")
         forecast_scores = forecast.get("scores", [])
     except Exception as e:
-        print(f"admin_reports: forecast warning ({county}): {e}")
+        logger.warning("admin_reports: forecast warning (%s): %s", county, e)
         trend = "stable"
         forecast_scores = []
 
     # Advisory blueprint for the county's predicted calamity.
-    if level == "High" or county in ["Makueni", "Machakos", "Isiolo"]:
-        calamity = "Flash Floods, Severe Landslides & Waterborne Outbreaks"
-    else:
-        calamity = "Severe Multi-Season Drought & Agricultural Deficits"
+    calamity = calamity_for(county, level)
     advisory = get_county_advisory(county, calamity)
 
     return {
@@ -586,7 +598,7 @@ def get_analytics(engine):
             result["admin_count"] = admins.c
             result["alert_count"] = alerts.c
     except Exception as e:
-        print(f"admin_reports: analytics count warning: {e}")
+        logger.warning("admin_reports: analytics count warning: %s", e)
 
     # Build the live risk board with forecast + advisory enrichment.
     # Fetch the latest persisted record per county ONCE and reuse it across all

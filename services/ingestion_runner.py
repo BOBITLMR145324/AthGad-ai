@@ -1,11 +1,14 @@
 import os
 import sys
 import json
+import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import text
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logger = logging.getLogger(__name__)
 
 from core.processor import AthGadDataProcessor
 from core.db_helper import get_db_engine
@@ -16,9 +19,9 @@ from services.space_weather_ingestion import SpaceWeatherIngestionService
 
 def _store_health_payload(processor: AthGadDataProcessor, payload_json: str) -> int:
     """
-    Persists a weekly health surveillance payload after removing any
-    same-day rows for the affected counties, so repeated refreshes do not
-    double-count reported cases in the daily aggregates.
+    Persists a health surveillance payload after removing any rows for the
+    affected counties inside the payload's time span, so repeated refreshes do
+    not double-count reported cases in the daily aggregates.
     """
     try:
         records = json.loads(payload_json)
@@ -30,13 +33,20 @@ def _store_health_payload(processor: AthGadDataProcessor, payload_json: str) -> 
 
     counties = {r.get("county") for r in records if r.get("county")}
 
-    try:
-        ts = datetime.strptime(records[0]["timestamp"], "%Y-%m-%d %H:%M:%S")
-    except (KeyError, TypeError, ValueError):
-        ts = datetime.now()
-
-    day_start = ts.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
+    # Determine the full time span covered by the payload (the synthetic
+    # provider now generates a 30-day window).
+    timestamps = []
+    for r in records:
+        try:
+            timestamps.append(datetime.strptime(r["timestamp"], "%Y-%m-%d %H:%M:%S"))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if timestamps:
+        span_start = min(timestamps).replace(hour=0, minute=0, second=0, microsecond=0)
+        span_end = (max(timestamps) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        span_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        span_end = span_start + timedelta(days=1)
 
     try:
         placeholders = ",".join(f":c{i}" for i in range(len(counties)))
@@ -45,13 +55,13 @@ def _store_health_payload(processor: AthGadDataProcessor, payload_json: str) -> 
             conn.execute(
                 text(
                     "DELETE FROM health_records "
-                    "WHERE timestamp >= :day_start AND timestamp < :day_end "
+                    "WHERE timestamp >= :span_start AND timestamp < :span_end "
                     f"AND county IN ({placeholders})"
                 ),
-                {"day_start": day_start, "day_end": day_end, **params},
+                {"span_start": span_start, "span_end": span_end, **params},
             )
     except Exception as e:
-        print(f"Ingestion runner: same-day health dedup skipped: {e}")
+        logger.warning("Ingestion runner: health dedup skipped: %s", e)
 
     processor.process_and_store_health(payload_json)
     return len(records)
@@ -75,7 +85,7 @@ def run_all_ingestion() -> dict:
             "records": count,
         }
     except Exception as e:
-        print(f"Ingestion runner: health error: {e}")
+        logger.error("Ingestion runner: health error: %s", e)
         results["health"] = {"status": "error", "message": str(e)}
 
     try:
@@ -85,7 +95,7 @@ def run_all_ingestion() -> dict:
         processor.process_and_store_climate(raw)
         results["climate"] = {"status": "ok" if count else "empty", "records": count}
     except Exception as e:
-        print(f"Ingestion runner: climate error: {e}")
+        logger.error("Ingestion runner: climate error: %s", e)
         results["climate"] = {"status": "error", "message": str(e)}
 
     try:
@@ -94,7 +104,7 @@ def run_all_ingestion() -> dict:
         processor.process_and_store_space_weather(kp)
         results["space"] = {"status": "ok" if kp else "empty", "records": len(kp)}
     except Exception as e:
-        print(f"Ingestion runner: space weather error: {e}")
+        logger.error("Ingestion runner: space weather error: %s", e)
         results["space"] = {"status": "error", "message": str(e)}
 
     return results

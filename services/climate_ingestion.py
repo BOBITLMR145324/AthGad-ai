@@ -1,11 +1,14 @@
 import os
 import sys
+import logging
 import httpx
 from datetime import datetime
 from dotenv import load_dotenv
 
 # Ensure configuration boundaries map accurately
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logger = logging.getLogger(__name__)
 
 # Load .env from config directory with robust path resolution
 dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', '.env')
@@ -35,26 +38,26 @@ class ClimateIngestionService:
             "longitude": self.lon,
             "daily": ["temperature_2m_max", "temperature_2m_min", "precipitation_sum", "et0_fao_evapotranspiration"],
             "timezone": "Africa/Nairobi",
-            "past_days": 7,        # Fetch recent historical rolling window
+            "past_days": 30,       # Match the analytics engine's 30-day observation window
             "forecast_days": 1
         }
         
         try:
-            print(f"[{datetime.now()}] Initiating Climate Ingestion request for Coordinates: ({self.lat}, {self.lon})...")
+            logger.info("Initiating Climate Ingestion request for Coordinates: (%s, %s)...", self.lat, self.lon)
             response = httpx.get(self.base_url, params=params, timeout=15.0)
             
             if response.status_code == 200:
-                print("Climate Ingestion Engine: Extraction successful.")
+                logger.info("Climate Ingestion Engine: Extraction successful.")
                 return response.json()
             else:
-                print(f"Climate Ingestion Engine Warning: Received status code {response.status_code}")
+                logger.warning("Climate Ingestion Engine Warning: Received status code %s", response.status_code)
                 return {}
                 
         except httpx.ConnectTimeout:
-            print("Critical Connection Failure: Open-Meteo API timed out. Isolation fallback logged.")
+            logger.error("Critical Connection Failure: Open-Meteo API timed out. Isolation fallback logged.")
             return {}
         except Exception as e:
-            print(f"Unexpected Ingestion Error occurred: {str(e)}")
+            logger.error("Unexpected Ingestion Error occurred: %s", e)
             return {}
 
 

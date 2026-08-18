@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PDF Reports - Admin Workspace</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/style.css?v={{ asset_version }}" />
   </head>
   <body class="bg-slate-950 text-slate-100 min-h-screen">
     <!-- Admin Header -->
@@ -95,9 +96,10 @@
       >
         <h2 class="text-2xl font-black text-white">PDF Report Generation</h2>
         <p class="text-slate-400 text-sm mt-1">
-          Reports are generated <strong class="text-emerald-300">live</strong> from
-          the AthGad AI system on every download — never cached or static. Any
-          user who subscribes is automatically included in the next report.
+          Reports are generated
+          <strong class="text-emerald-300">live</strong> from the AthGad AI
+          system on every download — never cached or static. Any user who
+          subscribes is automatically included in the next report.
         </p>
       </div>
 
@@ -180,7 +182,9 @@
           <div
             class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
           >
-            <p class="text-2xl font-black text-white" id="snap-total-users">—</p>
+            <p class="text-2xl font-black text-white" id="snap-total-users">
+              —
+            </p>
             <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
               Total Users
             </p>
@@ -188,7 +192,12 @@
           <div
             class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
           >
-            <p class="text-2xl font-black text-emerald-400" id="snap-subscribed">—</p>
+            <p
+              class="text-2xl font-black text-emerald-400"
+              id="snap-subscribed"
+            >
+              —
+            </p>
             <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
               Subscribed
             </p>
@@ -196,7 +205,9 @@
           <div
             class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
           >
-            <p class="text-2xl font-black text-rose-400" id="snap-unsubscribed">—</p>
+            <p class="text-2xl font-black text-rose-400" id="snap-unsubscribed">
+              —
+            </p>
             <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
               Unsubscribed
             </p>
@@ -204,7 +215,9 @@
           <div
             class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
           >
-            <p class="text-2xl font-black text-white" id="snap-predictions">—</p>
+            <p class="text-2xl font-black text-white" id="snap-predictions">
+              —
+            </p>
             <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
               Counties with Predictions
             </p>
@@ -212,7 +225,9 @@
           <div
             class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
           >
-            <p class="text-2xl font-black text-amber-400" id="snap-high-risk">—</p>
+            <p class="text-2xl font-black text-amber-400" id="snap-high-risk">
+              —
+            </p>
             <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
               High-Risk Counties
             </p>
@@ -228,7 +243,12 @@
           <div
             class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center"
           >
-            <p class="text-2xl font-black text-rose-400" id="snap-dispatch-failed">—</p>
+            <p
+              class="text-2xl font-black text-rose-400"
+              id="snap-dispatch-failed"
+            >
+              —
+            </p>
             <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">
               Dispatches Failed
             </p>
@@ -310,9 +330,9 @@
           <div>
             <h3 class="text-lg font-bold text-white">Subscribed Members</h3>
             <p class="text-xs text-slate-400 mt-1 leading-relaxed">
-              All currently subscribed members with their names, email addresses,
-              and subscription date &amp; time. Updated live — newly subscribing
-              users appear on the next download.
+              All currently subscribed members with their names, email
+              addresses, and subscription date &amp; time. Updated live — newly
+              subscribing users appear on the next download.
             </p>
           </div>
           <a
@@ -377,7 +397,6 @@
           </a>
         </div>
       </div>
-
     </main>
 
     <script>
@@ -425,7 +444,7 @@
           alert(
             "Start date year must be 4 digits and cannot be beyond " +
               new Date().getFullYear() +
-              "."
+              ".",
           );
           return;
         }
@@ -433,7 +452,7 @@
           alert(
             "End date year must be 4 digits and cannot be beyond " +
               new Date().getFullYear() +
-              "."
+              ".",
           );
           return;
         }
@@ -442,7 +461,10 @@
           return;
         }
         document.querySelectorAll(".pdf-link").forEach(function (link) {
-          var url = new URL(link.getAttribute("data-report"), window.location.origin);
+          var url = new URL(
+            link.getAttribute("data-report"),
+            window.location.origin,
+          );
           url.searchParams.delete("date_from");
           url.searchParams.delete("date_to");
           if (from) url.searchParams.set("date_from", from);
@@ -452,10 +474,14 @@
         var status = document.getElementById("range-status");
         if (from || to) {
           status.textContent =
-            "Reports will be limited to " + (from || "earliest") +
-            " \u2192 " + (to || "today") + ".";
+            "Reports will be limited to " +
+            (from || "earliest") +
+            " \u2192 " +
+            (to || "today") +
+            ".";
         } else {
-          status.textContent = "No date filter \u2014 reports include the full history.";
+          status.textContent =
+            "No date filter \u2014 reports include the full history.";
         }
         var url = new URL(window.location.href);
         url.search = "";
@@ -470,7 +496,8 @@
         document.getElementById("date-from").setAttribute("max", maxDate);
         document.getElementById("date-to").setAttribute("max", maxDate);
         var params = new URLSearchParams(window.location.search);
-        document.getElementById("date-from").value = params.get("date_from") || "";
+        document.getElementById("date-from").value =
+          params.get("date_from") || "";
         document.getElementById("date-to").value = params.get("date_to") || "";
         applyRange();
       }
@@ -478,12 +505,16 @@
       document.addEventListener("DOMContentLoaded", function () {
         loadReportSnapshot();
         setInterval(loadReportSnapshot, 30000);
-        document.getElementById("apply-range").addEventListener("click", applyRange);
-        document.getElementById("clear-range").addEventListener("click", function () {
-          document.getElementById("date-from").value = "";
-          document.getElementById("date-to").value = "";
-          applyRange();
-        });
+        document
+          .getElementById("apply-range")
+          .addEventListener("click", applyRange);
+        document
+          .getElementById("clear-range")
+          .addEventListener("click", function () {
+            document.getElementById("date-from").value = "";
+            document.getElementById("date-to").value = "";
+            applyRange();
+          });
         initRange();
       });
     </script>

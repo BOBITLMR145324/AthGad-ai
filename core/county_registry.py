@@ -1,5 +1,12 @@
 # core/county_registry.py
 
+# Single source of truth for the Eastern Kenya counties covered by the early
+# warning system. Import this everywhere instead of redefining the list.
+COVERED_COUNTIES = [
+    "Kitui", "Machakos", "Makueni", "Marsabit",
+    "Isiolo", "Meru", "Embu", "Tharaka-Nithi",
+]
+
 HAZARD_BLUEPRINTS = {
     "Flooding & Landslides": {
         "vulnerability_drivers": "Areas near rivers or on steep, worn-down slopes that can flood or slide during heavy rain.",
@@ -32,6 +39,58 @@ HAZARD_BLUEPRINTS = {
         ]
     }
 }
+
+# ---------------------------------------------------------------------------
+# Centralized county risk-profile classification (single source of truth).
+# Previously this logic was duplicated across app.py and admin_reports.py with
+# DIFFERENT hardcoded county lists, causing inconsistent threat labels between
+# the telemetry board, the dashboard and the admin reports.
+# ---------------------------------------------------------------------------
+
+# Counties whose dominant threat profile is health/waterborne (vector outbreaks).
+_HEALTH_THREAT_COUNTIES = frozenset({"Marsabit", "Isiolo"})
+
+# Counties whose dominant calamity profile is flooding/landslides.
+_FLOOD_CALAMITY_COUNTIES = frozenset({"Makueni", "Machakos", "Isiolo"})
+
+
+def threat_category_for(county: str, risk_level: str = "Low") -> tuple:
+    """
+    Returns (threat_category, primary_threat) for a county based on its live
+    risk level. Mirrors the assignments used across the telemetry board so the
+    admin analytics page stays consistent with the dashboard.
+
+    - High risk counties and the health-prone counties (Marsabit, Isiolo) are
+      classified as health threats (water contamination & vector outbreaks).
+    - Everything else is a climate threat (rainfall deficit & soil moisture loss).
+    """
+    if risk_level == "High" or county in _HEALTH_THREAT_COUNTIES:
+        return "health", "Water Contamination & Vector Outbreak"
+    return "climate", "Rainfall Deficit & Soil Moisture Loss"
+
+
+def calamity_for(county: str, risk_level: str = "Low") -> str:
+    """
+    Returns the primary calamity label for a county based on its live risk
+    level. High-risk counties and the flood-prone counties (Makueni, Machakos,
+    Isiolo) are classified as flash-flood/landslide/waterborne; everything else
+    is classified as multi-season drought.
+    """
+    if risk_level == "High" or county in _FLOOD_CALAMITY_COUNTIES:
+        return "Flash Floods, Severe Landslides & Waterborne Outbreaks"
+    return "Severe Multi-Season Drought & Agricultural Deficits"
+
+
+def proactive_actions_for_risk(county: str, risk_level: str = "Low") -> list:
+    """
+    Returns the proactive mitigation actions appropriate for a county's
+    predicted calamity at the given risk level. Used by the forecast endpoints
+    so every future prediction carries actionable advice.
+    """
+    calamity = calamity_for(county, risk_level)
+    advisory = get_county_advisory(county, calamity)
+    return advisory.get("proactive_solutions", [])
+
 
 def get_county_advisory(county_name: str, calculated_calamity: str) -> dict:
     """

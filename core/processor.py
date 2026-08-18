@@ -1,11 +1,9 @@
 import os
 import sys
 import json
+import logging
 import pandas as pd
-try:
-    from db_helper import get_db_engine
-except ModuleNotFoundError:
-    from core.db_helper import get_db_engine
+from core.db_helper import get_db_engine
 from sqlalchemy import text
 from core.id_codes import (
     new_climate_code,
@@ -14,6 +12,8 @@ from core.id_codes import (
 )
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logger = logging.getLogger(__name__)
 
 class AthGadDataProcessor:
     def __init__(self):
@@ -28,12 +28,12 @@ class AthGadDataProcessor:
             df.to_sql(table, con=self.engine, if_exists='append', index=False)
             return True
         except Exception as e:
-            print(f"Processor: Could not write to '{table}': {e}")
+            logger.error("Processor: Could not write to '%s': %s", table, e)
             return False
 
     def process_and_store_climate(self, raw_climate_json: dict):
         if not raw_climate_json or 'daily' not in raw_climate_json:
-            print("Processor Warning: Empty climate payload received.")
+            logger.warning("Processor Warning: Empty climate payload received.")
             return
 
         daily_data = raw_climate_json['daily']
@@ -48,10 +48,14 @@ class AthGadDataProcessor:
             'evapotranspiration': daily_data['et0_fao_evapotranspiration']
         })
         df.dropna(subset=['timestamp'], inplace=True)
-        df.fillna(df.mean(numeric_only=True), inplace=True)
+        # pandas 3.x removed numeric_only from DataFrame.mean(); compute the
+        # mean over numeric columns explicitly instead.
+        numeric_cols = df.select_dtypes(include="number").columns
+        if len(numeric_cols):
+            df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].mean())
 
         if df.empty:
-            print("Processor: No climate rows to store after cleaning.")
+            logger.info("Processor: No climate rows to store after cleaning.")
             return
 
         # Assign a human-readable, domain-specific primary key per row
@@ -70,9 +74,9 @@ class AthGadDataProcessor:
                     WHERE geom IS NULL;
                 """), {"lon": lon, "lat": lat})
         except Exception as e:
-            print(f"Processor: Geometry update warning (PostGIS may be unavailable): {e}")
+            logger.warning("Processor: Geometry update warning (PostGIS may be unavailable): %s", e)
 
-        print(f"Processor: Appended {len(df)} climate metrics via SQLAlchemy.")
+        logger.info("Processor: Appended %d climate metrics via SQLAlchemy.", len(df))
 
     def process_and_store_space_weather(self, raw_kp_list: list):
         if not raw_kp_list:
@@ -92,7 +96,7 @@ class AthGadDataProcessor:
         # Stream directly to database table using SQLAlchemy connection pool
         if not self._to_sql(df, 'space_weather_records'):
             return
-        print(f"Processor: Synchronized {len(df)} space telemetry records via SQLAlchemy.")
+        logger.info("Processor: Synchronized %d space telemetry records via SQLAlchemy.", len(df))
 
     def process_and_store_health(self, raw_health_json_str: str):
         try:
@@ -124,7 +128,7 @@ class AthGadDataProcessor:
 
         if not self._to_sql(df, 'health_records'):
             return
-        print(f"Processor: Parsed {len(df)} health observations via SQLAlchemy.")
+        logger.info("Processor: Parsed %d health observations via SQLAlchemy.", len(df))
 
 if __name__ == "__main__":
     print("Database processing pipelines refactored for SQLAlchemy execution.")

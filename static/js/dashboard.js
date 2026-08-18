@@ -1,6 +1,17 @@
 // Global variable container to store the chart instance
 let metricsChartInstance = null;
 
+// Escape server-provided strings before injecting them into innerHTML so a
+// crafted advisory/alert value cannot execute script in a user's browser.
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   // Initial system load run
   triggerRiskEvaluationPipeline();
@@ -81,7 +92,7 @@ function triggerRiskEvaluationPipeline() {
         solutionsContainer.innerHTML += `
                     <div class="flex items-start space-x-3 p-2.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-amber-500/30 transition">
                         <input type="checkbox" class="mt-1 accent-amber-500 rounded h-4 w-4" checked onclick="return false;">
-                        <span class="text-slate-200 text-xs leading-relaxed">${solution}</span>
+                        <span class="text-slate-200 text-xs leading-relaxed">${escapeHtml(solution)}</span>
                     </div>
                 `;
       });
@@ -90,7 +101,7 @@ function triggerRiskEvaluationPipeline() {
       const effectsContainer = document.getElementById("cascading-effects");
       effectsContainer.innerHTML = "";
       data.advisory.cascading_effects.forEach((effect) => {
-        effectsContainer.innerHTML += `<li>${effect}</li>`;
+        effectsContainer.innerHTML += `<li>${escapeHtml(effect)}</li>`;
       });
 
       // 6. Render the Multi-Domain Chart values
@@ -183,14 +194,6 @@ function renderDomainMetricsChart(metrics) {
 }
 
 function loadStagedAlertHistory() {
-  const tableBody =
-    document.querySelector("#historical-alerts-table tbody") ||
-    document.getElementById("querying-rows-trigger");
-
-  // Fallback locator: find the container parent if an explicit tbody ID doesn't exist
-  const statusBoardContainer =
-    document.querySelector(".bg-slate-900\\/50") || document.body;
-
   // Change the URL path right here ──────────────────────▼
   fetch("/api/v1/alerts/history")
     .then((response) => {
@@ -244,26 +247,26 @@ function loadStagedAlertHistory() {
           const rowHTML = `
     <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 transition duration-200 text-[13px] text-slate-200 text-left">
         <td class="py-5 px-6 font-semibold tracking-wide text-slate-100 max-w-[280px] truncate border-r border-slate-800/40">
-            ${calamity}
+            ${escapeHtml(calamity)}
         </td>
         
         <td class="py-5 px-6 font-mono text-xs text-slate-400 border-r border-slate-800/40">
-            ${timestamp}
+            ${escapeHtml(timestamp)}
         </td>
         
         <td class="py-5 px-6 font-bold text-white border-r border-slate-800/40 group cursor-pointer">
             <span class="text-white group-hover:text-emerald-400 transition-colors duration-300 ease-in-out tracking-wide">
-                ${county}
+                ${escapeHtml(county)}
             </span>
         </td>
         
         <td class="py-5 px-6 font-mono font-bold text-white text-sm border-r border-slate-800/40">
-            ${rating}
+            ${escapeHtml(rating)}
         </td>
         
         <td class="py-5 px-6">
             <span class="px-3 py-1 rounded-md text-[11px] font-extrabold tracking-wider uppercase shadow-sm ${badgeClass}">
-                ${level}
+                ${escapeHtml(level)}
             </span>
         </td>
     </tr>

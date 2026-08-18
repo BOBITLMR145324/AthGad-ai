@@ -4,8 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>System Analytics - Admin Workspace</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
-    <script src="/static/js/chart.umd.min.js"></script>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/style.css?v={{ asset_version }}" />
+    <script src="/static/js/chart.umd.min.js?v={{ asset_version }}"></script>
   </head>
   <body class="bg-slate-950 text-slate-100 min-h-screen">
     <!-- Admin Header -->
@@ -126,7 +127,10 @@
           >
             Subscribed
           </h3>
-          <p class="text-3xl font-black text-emerald-400 mt-3" id="kpi-subscribed">
+          <p
+            class="text-3xl font-black text-emerald-400 mt-3"
+            id="kpi-subscribed"
+          >
             {{ analytics.subscribed_count }}
           </p>
         </div>
@@ -136,7 +140,10 @@
           >
             Unsubscribed
           </h3>
-          <p class="text-3xl font-black text-rose-400 mt-3" id="kpi-unsubscribed">
+          <p
+            class="text-3xl font-black text-rose-400 mt-3"
+            id="kpi-unsubscribed"
+          >
             {{ analytics.unsubscribed_count }}
           </p>
         </div>
@@ -146,7 +153,10 @@
           >
             Risk Alerts Logged
           </h3>
-          <p class="text-3xl font-black text-amber-400 mt-3" id="kpi-alert-count">
+          <p
+            class="text-3xl font-black text-amber-400 mt-3"
+            id="kpi-alert-count"
+          >
             {{ analytics.alert_count }}
           </p>
         </div>
@@ -181,8 +191,8 @@
             </div>
             <canvas
               id="riskPieChart"
-              data-risk-dist='{{ analytics.risk_distribution | tojson }}'
-              data-risk-pct='{{ analytics.risk_distribution_pct | tojson }}'
+              data-risk-dist="{{ analytics.risk_distribution | tojson }}"
+              data-risk-pct="{{ analytics.risk_distribution_pct | tojson }}"
             ></canvas>
           </div>
           <!-- Dynamic summary panel -->
@@ -327,7 +337,7 @@
             </div>
             <canvas
               id="countyBarChart"
-              data-status-board='{{ analytics.status_board | tojson }}'
+              data-status-board="{{ analytics.status_board | tojson }}"
             ></canvas>
           </div>
           <!-- Dynamic per-county forecast detail list -->

@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AthGad AI - Premium Alerts</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/css/style.css?v={{ asset_version }}" />
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
 
@@ -88,26 +89,6 @@
                 </div>
             </div>
 
-            <!-- Payment & Currency Options -->
-            <div class="grid md:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">2. Currency</label>
-                    <select name="currency" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-                        <option value="KES">KES - Kenyan Shilling</option>
-                        <option value="USD">USD - US Dollar</option>
-                        <option value="EUR">EUR - Euro</option>
-                    </select>
-                </div>
-<div>
-                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">3. Payment Method</label>
-                    <select name="payment_method" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-                        <option value="mpesa">📱 M-PESA</option>
-                        <option value="card">💳 Credit / Debit Card</option>
-                        <option value="airtime">📶 Airtime Deduction</option>
-                    </select>
-                </div>
-            </div>
-
             <!-- Pricing Metrics Card -->
             <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-4 text-xs space-y-2 text-slate-400">
                 <div class="flex justify-between text-slate-200 font-semibold">
@@ -120,7 +101,7 @@
                 </div>
                 <div class="flex justify-between">
                     <span>Monthly Cost:</span> 
-                    <span>150 KES / $1.50</span>
+                    <span>150 KES via M-PESA</span>
                 </div>
             </div>
 
@@ -142,25 +123,8 @@
     </div>
 
     <!-- 2-Second Auto-Dismiss Script for Flash Alerts -->
-    <script>
-        document.addEventListener("DOMContentLoaded", () => {
-            const alerts = document.querySelectorAll(".flash-alert");
-            
-            if (alerts.length > 0) {
-                setTimeout(() => {
-                    alerts.forEach(alert => {
-                        // Fade out opacity
-                        alert.classList.replace("opacity-100", "opacity-0");
-                        
-                        // Wait for 500ms transition fade to finish, then remove element from layout
-                        setTimeout(() => {
-                            alert.remove();
-                        }, 500);
-                    });
-                }, 2000); // 2000ms = 2 seconds
-            }
-        });
-    </script>
+    <script src="/static/js/flash-alerts.js?v={{ asset_version }}"></script>
+
 </body>
 </html>
 

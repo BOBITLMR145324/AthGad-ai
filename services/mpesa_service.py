@@ -1,8 +1,12 @@
 import os
+import logging
+import threading
 import requests
 import base64
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables from config/.env relative to this file's location
 dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', '.env')
@@ -26,18 +30,57 @@ else:
     OAUTH_URL = "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
     STK_PUSH_URL = "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
 
+# Production safety validation: fail loudly when production is selected but the
+# callback URL or shortcode still points at the sandbox defaults. This prevents
+# STK pushes from silently targeting the wrong URL / shortcode in production.
+if MPESA_ENVIRONMENT == "production":
+    if not CALLBACK_URL or "yourdomain.com" in CALLBACK_URL:
+        raise RuntimeError(
+            "MPESA_CALLBACK_URL is not configured for production. "
+            "Set MPESA_CALLBACK_URL to your real HTTPS callback endpoint "
+            "in config/.env before enabling MPESA_ENVIRONMENT=production."
+        )
+    if BUSINESS_SHORTCODE == "174379":
+        raise RuntimeError(
+            "MPESA_SHORTCODE is still set to the sandbox shortcode (174379). "
+            "Set MPESA_SHORTCODE to your production paybill/till number "
+            "in config/.env before enabling MPESA_ENVIRONMENT=production."
+        )
+
+
+# In-process OAuth token cache. Safaricom access tokens are valid for ~1 hour;
+# re-requesting one for every STK push is wasteful and adds latency. The token
+# is refreshed 5 minutes before expiry so concurrent pushes reuse it safely.
+_token_cache = {"token": None, "expires_at": None}
+_token_lock = threading.Lock()
+_TOKEN_SAFETY_MARGIN_SECONDS = 300
+
 
 def get_mpesa_access_token():
-    """Obtains OAuth access token from Safaricom Daraja API."""
+    """Obtains (and caches) an OAuth access token from Safaricom Daraja API."""
     if not CONSUMER_KEY or not CONSUMER_SECRET:
         raise Exception("M-PESA CONSUMER_KEY or CONSUMER_SECRET not configured in .env file.")
-    
-    response = requests.get(OAUTH_URL, auth=(CONSUMER_KEY, CONSUMER_SECRET), timeout=15)
-    if response.status_code == 200:
-        token = response.json().get("access_token")
-        print(f"✅ M-PESA OAuth token acquired successfully.")
+
+    now = datetime.now(timezone.utc)
+    with _token_lock:
+        if (_token_cache["token"] and _token_cache["expires_at"]
+                and _token_cache["expires_at"] > now + timedelta(seconds=_TOKEN_SAFETY_MARGIN_SECONDS)):
+            return _token_cache["token"]
+
+        response = requests.get(OAUTH_URL, auth=(CONSUMER_KEY, CONSUMER_SECRET), timeout=15)
+        if response.status_code != 200:
+            raise Exception(f"Failed to acquire M-PESA OAuth token. Status: {response.status_code} - {response.text}")
+
+        payload = response.json()
+        token = payload.get("access_token")
+        if not token:
+            raise Exception("M-PESA OAuth response did not include an access_token.")
+
+        expires_in = int(payload.get("expires_in", 3600))
+        _token_cache["token"] = token
+        _token_cache["expires_at"] = now + timedelta(seconds=expires_in)
+        logger.info("M-PESA OAuth token acquired successfully (cached for %ss).", expires_in)
         return token
-    raise Exception(f"Failed to acquire M-PESA OAuth token. Status: {response.status_code} - {response.text}")
 
 
 def initiate_stk_push(phone_number, amount, account_reference):
@@ -78,13 +121,13 @@ def initiate_stk_push(phone_number, amount, account_reference):
         "TransactionDesc": "AthGad Premium Subscription"
     }
 
-    print(f"📲 Initiating M-PESA STK Push to {formatted_phone} for KES {amount}...")
+    logger.info("Initiating M-PESA STK Push to %s for KES %s...", formatted_phone, amount)
     response = requests.post(STK_PUSH_URL, json=payload, headers=headers, timeout=20)
     
     if response.status_code in [200, 201]:
         result = response.json()
-        print(f"✅ M-PESA STK Push response: {result.get('ResponseDescription', 'Sent')}")
+        logger.info("M-PESA STK Push response: %s", result.get('ResponseDescription', 'Sent'))
         return result
     else:
-        print(f"❌ M-PESA STK Push failed: {response.status_code} - {response.text}")
+        logger.error("M-PESA STK Push failed: %s - %s", response.status_code, response.text)
         return {"error": "STK push request failed", "status_code": response.status_code, "details": response.text}

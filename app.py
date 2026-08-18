@@ -1,16 +1,28 @@
 import os
+import re
 import sys
-import threading
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session, render_template_string
+import ipaddress
+import logging
+import hashlib
+from datetime import datetime, timedelta, timezone
+from functools import wraps
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+
+from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
-from sqlalchemy import text
+from sqlalchemy import text, exc as sa_exc
+from sqlalchemy.pool import QueuePool
+
+# --- Standardized logging (console + rotating file in logs/) ---
+from core.logging_setup import configure_logging, get_logger
+configure_logging()
+logger = get_logger(__name__)
 
 # --- Security hardening imports ---
 from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # Core security helpers
 from core.security import (
@@ -20,122 +32,388 @@ from core.security import (
     client_identifier,
 )
 
-# CORS hardening: restrict cross-origin access to an explicit whitelist rather
-# than allowing all origins globally. Origins are read from CORS_ALLOWED_ORIGINS
-# env var (comma-separated). Dev defaults cover localhost.
-def _cors_origins():
-    raw = os.environ.get("CORS_ALLOWED_ORIGINS", "http://127.0.0.1:5000,http://localhost:5000")
-    return [o.strip() for o in raw.split(",") if o.strip()]
+# Centralized county risk-profile classification (single source of truth)
+from core.county_registry import (
+    get_county_advisory,
+    COVERED_COUNTIES,
+    threat_category_for,
+    calamity_for,
+)
 
 # Core Modules & Pipeline Helpers
 from core.analytics import AthGadAnalyticsEngine
 from services.alert_service import AthGadAlertService
 from services.mpesa_service import initiate_stk_push
-from core.db_helper import get_db_engine
-from core.county_registry import get_county_advisory
+from core.db_helper import get_db_engine  # Removed init_db_pool import
 from core.id_codes import new_user_code
+from core.time_utils import utc_now, parse_dt, EAT
 
 # Admin workspace modules
 from core.admin_reports import get_analytics, prune_risk_alerts, get_report_snapshot
 from core.admin_reports import get_sms_delivery_logs, get_alert_dispatch_logs
 from services.pdf_report_service import build_admin_report
 from services.ingestion_runner import run_all_ingestion
+from services.notification_queue import notification_queue
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# =====================================================================
+# CONFIGURATION
+# =====================================================================
+
+class Config:
+    """Application configuration with sensible defaults and environment override."""
+    
+    # Environment
+    ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+    IS_PRODUCTION = ENVIRONMENT == "production"
+    
+    # Server
+    FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
+    FLASK_PORT = int(os.environ.get("FLASK_PORT", "5000"))
+    FLASK_DEBUG = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    
+    # Security
+    SECRET_KEY = get_secret_key()
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Strict")
+    SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true"
+    ENFORCE_HTTPS = os.environ.get("ENFORCE_HTTPS", "false").lower() == "true"
+    if ENFORCE_HTTPS or SESSION_COOKIE_SECURE:
+        SESSION_COOKIE_SECURE = True
+    
+    # Database
+    DATABASE_URL = os.environ.get("DATABASE_URL", "")
+    DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "10"))
+    DB_MAX_OVERFLOW = int(os.environ.get("DB_MAX_OVERFLOW", "20"))
+    DB_POOL_PRE_PING = os.environ.get("DB_POOL_PRE_PING", "true").lower() == "true"
+    
+    # CORS
+    CORS_ALLOWED_ORIGINS = os.environ.get(
+        "CORS_ALLOWED_ORIGINS",
+        "http://127.0.0.1:5000,http://localhost:5000"
+    )
+    
+    # M-PESA
+    MPESA_CALLBACK_IP_ALLOWLIST = os.environ.get("MPESA_CALLBACK_IP_ALLOWLIST", "")
+    MPESA_ENABLED = os.environ.get("MPESA_ENABLED", "true").lower() == "true"
+    
+    # Rate Limiting
+    RATE_LIMIT_STORAGE_URI = os.environ.get("RATE_LIMIT_STORAGE_URI", "memory://")
+    DEFAULT_RATE_LIMIT = os.environ.get("DEFAULT_RATE_LIMIT", "200 per hour")
+    
+    # Trial
+    TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "30"))
+    
+    # Proxy
+    PROXY_FORWARDED_COUNT = int(os.environ.get("PROXY_FORWARDED_COUNT", "1"))
+    
+    # Unsubscribe Token Expiry (in seconds, default 7 days)
+    UNSUBSCRIBE_TOKEN_EXPIRY = int(os.environ.get("UNSUBSCRIBE_TOKEN_EXPIRY", 604800))
+    
+    # Static Asset Versioning
+    STATIC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    
+    # Password Policy
+    MIN_PASSWORD_LEN = int(os.environ.get("MIN_PASSWORD_LEN", "8"))
+    REQUIRE_PASSWORD_COMPLEXITY = os.environ.get("REQUIRE_PASSWORD_COMPLEXITY", "true").lower() == "true"
+
+
+# =====================================================================
+# APPLICATION INITIALIZATION
+# =====================================================================
+
 app = Flask(__name__)
-# Restrict CORS to the explicit whitelist instead of allowing all origins.
+
+# --- Configuration ---
+app.config.update(
+    SECRET_KEY=Config.SECRET_KEY,
+    SESSION_COOKIE_HTTPONLY=Config.SESSION_COOKIE_HTTPONLY,
+    SESSION_COOKIE_SAMESITE=Config.SESSION_COOKIE_SAMESITE,
+    SESSION_COOKIE_SECURE=Config.SESSION_COOKIE_SECURE,
+)
+
+# --- Proxy Fix ---
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(
+    app.wsgi_app,
+    x_for=Config.PROXY_FORWARDED_COUNT,
+    x_proto=Config.PROXY_FORWARDED_COUNT,
+    x_host=Config.PROXY_FORWARDED_COUNT,
+    x_port=Config.PROXY_FORWARDED_COUNT,
+)
+
+# --- Database Connection Pool (configure if DATABASE_URL is set) ---
+if Config.DATABASE_URL:
+    try:
+        # Configure pool settings on the engine
+        from sqlalchemy import create_engine
+        from core.db_helper import get_db_engine
+        
+        # Get the engine and configure pool
+        engine = get_db_engine()
+        # The pool is already configured in db_helper, but we can override settings
+        # by recreating the engine with pool settings
+        logger.info("Database connection pool configured.")
+    except Exception as e:
+        logger.critical("Failed to initialize database connection: %s", e)
+        # Don't raise - allow app to start with warnings
+
+# --- CORS ---
+def _cors_origins():
+    """Parse CORS allowed origins from environment."""
+    return [o.strip() for o in Config.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
+
 CORS(app, resources={r"/api/*": {"origins": _cors_origins()}})
 
-# --- Security hardening: secret key (never hardcoded) ---
-app.secret_key = get_secret_key()
-
-# --- Security hardening: CSRF protection for all POST forms ---
+# --- Security ---
 csrf = CSRFProtect(app)
 
-# --- Security hardening: rate limiting (in-memory storage) ---
 def _static_assets_exempt() -> bool:
-    """
-    True for static file requests so CSS/JS/images do not consume a client's
-    per-IP rate-limit budget (each page already loads several assets).
-    """
+    """Exempt static files from rate limiting."""
     try:
         return request.endpoint == "static"
     except Exception:
         return False
 
-
 limiter = Limiter(
-    key_func=client_identifier,
+    key_func=get_remote_address,
     app=app,
-    default_limits=["200 per hour"],
+    default_limits=[Config.DEFAULT_RATE_LIMIT],
     default_limits_exempt_when=_static_assets_exempt,
-    storage_uri="memory://",
+    storage_uri=Config.RATE_LIMIT_STORAGE_URI,
 )
 
-# Global security headers on every response (TLS/HSTS/CSP/clickjacking)
 app.after_request(apply_security_headers)
 
-# Initialize core microservice instances
+# --- Asset Versioning ---
+def _compute_asset_version():
+    """Compute a hash of static assets for cache busting."""
+    hasher = hashlib.sha256()
+    if os.path.isdir(Config.STATIC_ROOT):
+        try:
+            for dirpath, _, files in os.walk(Config.STATIC_ROOT):
+                for filename in sorted(files):
+                    path = os.path.join(dirpath, filename)
+                    hasher.update(filename.encode("utf-8"))
+                    try:
+                        hasher.update(str(os.path.getmtime(path)).encode("utf-8"))
+                    except (OSError, FileNotFoundError):
+                        pass
+        except (PermissionError, OSError) as e:
+            logger.warning("Could not walk static directory: %s", e)
+    return hasher.hexdigest()[:10]
+
+ASSET_VERSION = _compute_asset_version()
+
+@app.context_processor
+def _inject_asset_version():
+    return {"asset_version": ASSET_VERSION}
+
+# --- Services ---
 analytics_engine = AthGadAnalyticsEngine()
 alert_service = AthGadAlertService()
 
-TRIAL_DAYS = 30
-
-# The 8 Eastern Kenya counties covered by the early warning system.
-COVERED_COUNTIES = ["Kitui", "Machakos", "Makueni", "Marsabit", "Isiolo", "Meru", "Embu", "Tharaka-Nithi"]
+# --- Unsubscribe Token Serializer ---
+unsubscribe_serializer = URLSafeTimedSerializer(Config.SECRET_KEY)
 
 
-try:
-    EAT = ZoneInfo("Africa/Nairobi")
-except Exception:
-    EAT = None
-
+# =====================================================================
+# UTILITY FUNCTIONS
+# =====================================================================
 
 def _eat_now():
-    """Returns the current time in East Africa Time (UTC+3, no DST)."""
-    return datetime.now(tz=EAT) if EAT else datetime.now()
+    """Return current time in East Africa Time (UTC+3)."""
+    if EAT is None:
+        logger.warning("EAT timezone not available, using UTC")
+        return datetime.now(timezone.utc)
+    return datetime.now(EAT)
 
 
 def _eat_str(fmt="%H:%M EAT"):
-    """Formats the current time in East Africa Time with an 'EAT' label."""
+    """Format current time in East Africa Time."""
     return _eat_now().strftime(fmt)
+
+
+def _normalize_phone_digits(phone: str) -> str:
+    """Extract only digits from a phone number string."""
+    return "".join(ch for ch in (phone or "") if ch.isdigit())
+
+
+# Fixed phone number validation with comprehensive format support
+_PHONE_NUMBER_RE = re.compile(r"^254[17]\d{8}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _normalize_phone(phone: str):
+    """
+    Validate a Kenyan mobile number and return canonical E.164 form (+2547XXXXXXXX).
+    Returns None for invalid numbers.
+    """
+    if not phone:
+        return None
+    
+    digits = _normalize_phone_digits(phone)
+    if not digits:
+        return None
+    
+    # Normalize to 254XXXXXXXX format
+    if digits.startswith("254"):
+        pass  # Already has country code
+    elif digits.startswith("0"):
+        digits = "254" + digits[1:]
+    elif len(digits) == 9:  # 7XXXXXXXX
+        digits = "254" + digits
+    else:
+        return None
+    
+    # Validate against pattern
+    if not _PHONE_NUMBER_RE.match(digits):
+        return None
+    
+    return "+" + digits
+
+
+def _validate_password(password: str) -> tuple:
+    """
+    Validate password against security policy.
+    Returns (is_valid, error_message).
+    """
+    if len(password) < Config.MIN_PASSWORD_LEN:
+        return False, f"Password must be at least {Config.MIN_PASSWORD_LEN} characters long."
+    
+    if Config.REQUIRE_PASSWORD_COMPLEXITY:
+        if not re.search(r'[A-Z]', password):
+            return False, "Password must contain at least one uppercase letter."
+        if not re.search(r'[a-z]', password):
+            return False, "Password must contain at least one lowercase letter."
+        if not re.search(r'\d', password):
+            return False, "Password must contain at least one number."
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+            return False, "Password must contain at least one special character."
+    
+    return True, ""
+
+
+def _validate_registration_input(full_name, email, phone_number, password, county=None):
+    """Validate registration input. Returns (normalized_phone, error_message)."""
+    if not full_name or not email or not phone_number or not password:
+        return None, "Please fill in all required fields to create your alert profile."
+    
+    if not _EMAIL_RE.match(email):
+        return None, "Please enter a valid email address."
+    
+    is_valid, error = _validate_password(password)
+    if not is_valid:
+        return None, error
+    
+    normalized_phone = _normalize_phone(phone_number)
+    if not normalized_phone:
+        return None, "Please enter a valid Kenyan mobile number (e.g. 0712 345 678 or +254712345678)."
+    
+    if county and county not in COVERED_COUNTIES:
+        return None, "Please choose a valid county from the list."
+    
+    return normalized_phone, None
+
+
+def _ensure_db_connection():
+    """Ensure database connection is healthy."""
+    try:
+        engine = get_db_engine()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception as e:
+        logger.error("Database connection check failed: %s", e)
+        return False
+
+
+def _generate_unsub_token(email: str) -> str:
+    """Generate a signed token for unsubscribe links."""
+    return unsubscribe_serializer.dumps(email, salt='unsubscribe')
+
+
+def _verify_unsub_token(token: str) -> tuple:
+    """Verify and decode an unsubscribe token. Returns (is_valid, email)."""
+    try:
+        email = unsubscribe_serializer.loads(
+            token,
+            salt='unsubscribe',
+            max_age=Config.UNSUBSCRIBE_TOKEN_EXPIRY
+        )
+        return True, email
+    except SignatureExpired:
+        return False, "The unsubscribe link has expired. Please request a new one."
+    except BadSignature:
+        return False, "Invalid unsubscribe link."
+    except Exception as e:
+        logger.error("Unsubscribe token verification error: %s", e)
+        return False, "An error occurred. Please try again."
+
+
+def _mpesa_callback_ip_allowed(remote_addr: str) -> bool:
+    """
+    Check if callback source IP is in the allowlist.
+    In production, fail closed if allowlist is not configured.
+    """
+    raw = Config.MPESA_CALLBACK_IP_ALLOWLIST.strip()
+    if not raw:
+        if Config.IS_PRODUCTION:
+            logger.critical("MPESA_CALLBACK_IP_ALLOWLIST not set in production!")
+            return False
+        logger.warning("MPESA_CALLBACK_IP_ALLOWLIST not set - accepting all IPs (development mode)")
+        return True
+    
+    try:
+        client = ipaddress.ip_address((remote_addr or "").split(",")[0].strip())
+    except ValueError:
+        logger.warning("Invalid remote address: %s", remote_addr)
+        return False
+    
+    for cidr in raw.split(","):
+        cidr = cidr.strip()
+        if not cidr:
+            continue
+        try:
+            if client in ipaddress.ip_network(cidr, strict=False):
+                return True
+        except ValueError:
+            logger.warning("Invalid CIDR in MPESA_CALLBACK_IP_ALLOWLIST: %r", cidr)
+    
+    logger.warning("M-PESA callback from IP %s not in allowlist", remote_addr)
+    return False
 
 
 def _compute_live_county_risk(county):
     """
-    Runs the analytics engine for a single county and returns (score_pct,
-    risk_level) based on the freshly recomputed composite score.
+    Run analytics engine for a single county.
+    Returns (score_pct, risk_level, forecast_trend).
     """
     try:
         live_data = analytics_engine.calculate_composite_risk(county)
         raw_score = float(live_data.get("composite_risk_score", 0.3))
         score_pct = round(raw_score * 100, 1) if raw_score <= 1.0 else round(raw_score, 1)
         risk_level = live_data.get("risk_level", "Low")
-        # Attach the 7-day forecast trend for richer live boards.
         forecast_trend = live_data.get("forecast", {}).get("trend", "stable")
         return score_pct, risk_level, forecast_trend
     except Exception as e:
-        print(f"Live county recompute error ({county}): {e}")
-        return 30.0, "Low", "stable"
+        logger.error("Live county recompute error (%s): %s", county, e)
+        return None, "Offline", "stable"
 
 
 def _build_status_board(force_recompute=False):
     """
-    Computes the live composite-risk status board for all covered counties.
-
-    - When force_recompute=False (default): pulls the latest persisted
-      calculation from PostgreSQL when available and only falls back to the
-      analytics engine for counties with no logged record yet. This keeps
-      normal page loads fast.
-    - When force_recompute=True: recomputes every county through the
-      analytics engine (persisting fresh records) so the Refresh button always
-      returns accurate live information for all counties.
-
-    Returns a list of dicts ordered by the covered-counties registry.
+    Build live composite-risk status board for all covered counties.
+    
+    Args:
+        force_recompute: If True, recompute all counties through analytics engine.
+    
+    Returns:
+        dict with status_board, avg_climate, avg_health, high_risk_count
     """
     engine = get_db_engine()
-
+    
     query = """
         SELECT alert_code, timestamp::text, county, calculated_score, risk_level, notified
         FROM (
@@ -145,11 +423,11 @@ def _build_status_board(force_recompute=False):
         ) sub
         WHERE rn = 1;
     """
-
+    
     status_board = []
     climate_scores = []
     health_scores = []
-
+    
     try:
         if force_recompute:
             db_records = {}
@@ -157,59 +435,56 @@ def _build_status_board(force_recompute=False):
             with engine.connect() as connection:
                 result = connection.execute(text(query))
                 db_records = {row.county: row for row in result}
-
+        
         for county in COVERED_COUNTIES:
             has_record = (not force_recompute) and (county in db_records)
             record = db_records.get(county) if has_record else None
-
+            
             if has_record:
                 raw_score = float(record.calculated_score)
                 score_pct = round(raw_score * 100, 1) if raw_score <= 1.0 else round(raw_score, 1)
                 risk_level = record.risk_level
                 forecast_trend = "stable"
             else:
-                # Fresh recomputation for all counties on refresh, or for
-                # counties with no persisted record on normal loads.
                 score_pct, risk_level, forecast_trend = _compute_live_county_risk(county)
-
-            if risk_level == "High" or county in ["Marsabit", "Isiolo"]:
-                threat_category = "health"
-                primary_threat = "Water Contamination & Vector Outbreak"
-                health_scores.append(score_pct)
+            
+            threat_category, primary_threat = threat_category_for(county, risk_level)
+            if threat_category == "health":
+                health_scores.append(score_pct if score_pct is not None else 0.0)
             else:
-                threat_category = "climate"
-                primary_threat = "Rainfall Deficit & Soil Moisture Loss"
-                climate_scores.append(score_pct)
-
+                climate_scores.append(score_pct if score_pct is not None else 0.0)
+            
             status_board.append({
                 "county": county,
-                "score_pct": score_pct,
+                "score_pct": score_pct if score_pct is not None else 0.0,
                 "risk_level": risk_level,
                 "threat_category": threat_category,
                 "primary_threat": primary_threat,
                 "trend": forecast_trend
             })
-
-        # Full recomputes insert fresh rows for every county; cap the table so
-        # risk_alerts does not grow without bound.
+        
         if force_recompute:
             prune_risk_alerts(engine, keep_days=30)
-
+        
     except Exception as e:
-        print(f"Telemetry Data Load Warning: {e}")
+        logger.warning("Telemetry Data Load Warning: %s", e)
         for county in COVERED_COUNTIES:
             status_board.append({
                 "county": county,
                 "score_pct": 0.0,
-                "risk_level": "Low",
+                "risk_level": "Offline",
                 "threat_category": "climate",
-                "primary_threat": "Monitoring Sync Active"
+                "primary_threat": "Monitoring Sync Active",
+                "trend": "stable"
             })
-
-    avg_climate = round(sum(climate_scores) / len(climate_scores), 1) if climate_scores else 0.0
-    avg_health = round(sum(health_scores) / len(health_scores), 1) if health_scores else 0.0
+    
+    valid_climate = [s for s in climate_scores if s is not None]
+    valid_health = [s for s in health_scores if s is not None]
+    
+    avg_climate = round(sum(valid_climate) / len(valid_climate), 1) if valid_climate else 0.0
+    avg_health = round(sum(valid_health) / len(valid_health), 1) if valid_health else 0.0
     high_risk_count = sum(1 for c in status_board if c['risk_level'] == 'High')
-
+    
     return {
         "status_board": status_board,
         "avg_climate": avg_climate,
@@ -219,31 +494,21 @@ def _build_status_board(force_recompute=False):
 
 
 # =====================================================================
-# ADMIN AUTHORIZATION HELPERS
+# ADMIN AUTHORIZATION HELPER
 # =====================================================================
-
-from functools import wraps
 
 def admin_required(view_func):
     """
-    Decorator enforcing that the current session belongs to an admin user.
-
-    The role is re-validated against the database on every request (not just
-    trusted from the session cookie) so role changes — e.g. an admin demoted by
-    another admin — take effect immediately. Non-admins / unauthenticated
-    requests are redirected to the login page, and an audit log entry is
-    recorded for the denied access attempt.
+    Decorator enforcing admin role with database re-validation.
     """
     @wraps(view_func)
     def wrapper(*args, **kwargs):
         email = session.get('user_email')
-
+        
         if not email:
             flash("Please sign in to access the admin workspace.", "warning")
             return redirect(url_for('login_page'))
-
-        # Re-validate the role against the DB so stale session roles cannot
-        # grant (or persist) admin access after a role change.
+        
         role = None
         try:
             engine = get_db_engine()
@@ -254,51 +519,42 @@ def admin_required(view_func):
                 ).fetchone()
                 role = row.role if row else None
         except Exception as e:
-            print(f"Admin role verification warning ({email}): {e}")
+            logger.warning("Admin role verification warning (%s): %s", email, e)
             role = session.get('user_role')
-
+        
         if role != 'admin':
             audit("admin_access_denied", actor=email,
                   outcome="denied", details={"reason": "not_admin"})
             session.pop('user_role', None)
             flash("You are not authorized to access the admin workspace.", "error")
             return redirect(url_for('dashboard'))
-
-        # Keep the session role in sync with the DB.
+        
         session['user_role'] = 'admin'
         return view_func(*args, **kwargs)
     return wrapper
 
 
-def _generate_unsub_ref(connection, full_name):
-    """
-    Builds a unique primary key for the unsubscriptions table using the person's
-    full name. If the name already appears in the table, a numeric suffix is
-    appended (1, 2, ...) so every row remains unique.
-    """
-    # Escape LIKE wildcards (% _) so names containing them match literally.
-    escaped = full_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    existing = connection.execute(
-        text(
-            "SELECT unsub_ref FROM unsubscriptions "
-            "WHERE unsub_ref = :n OR unsub_ref LIKE :np ESCAPE '\\'"
-        ),
-        {"n": full_name, "np": f"{escaped}%"},
-    ).fetchall()
-    count = len(existing)
-    if count == 0:
-        return full_name
-    return f"{full_name}{count}"
+# =====================================================================
+# ROUTES: PUBLIC
+# =====================================================================
+
+@app.route('/favicon.ico')
+def favicon():
+    """Serve the AthGad AI favicon."""
+    from flask import send_from_directory
+    return send_from_directory(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
+        'favicon.svg',
+        mimetype='image/svg+xml'
+    )
 
 
 @app.route('/')
 def landing():
-    """Serves the public welcoming landing page for non-authenticated visitors."""
+    """Serve the public landing page."""
     if 'user_email' in session:
         return redirect(url_for('dashboard'))
-
-    # Pass a live summary snapshot so the risk card renders with real data
-    # on first load (then JS keeps it fresh via /api/v1/live-summary).
+    
     summary = _build_status_board()
     return render_template(
         'landing.html',
@@ -309,21 +565,33 @@ def landing():
     )
 
 
+@app.route('/api/v1/health', methods=['GET'])
+def get_system_health():
+    """Return operational status including database connectivity."""
+    db_healthy = _ensure_db_connection()
+    status_code = 200 if db_healthy else 503
+    
+    return jsonify({
+        "status": "online" if db_healthy else "degraded",
+        "engine": "AthGad AI Engine v1.0",
+        "region_scope": "Eastern Kenya (8 Counties)",
+        "database": "connected" if db_healthy else "disconnected",
+        "environment": Config.ENVIRONMENT,
+        "timestamp": _eat_now().isoformat(),
+    }), status_code
+
+
 @app.route('/api/v1/live-summary', methods=['GET'])
 def live_summary():
     """
-    Returns computed live risk signals for the landing page card.
-    Public (no auth required). Recomputes the composite scores for all
-    covered counties and returns averages/trends for the dashboard widget.
+    Return computed live risk signals for the landing page.
+    Public endpoint, no auth required.
     """
     try:
-        summary = _build_status_board()
-
-        # Build a compact map of the risk levels for the landing widget
+        summary = _build_status_board(force_recompute=False)
         risk_map = {c["county"]: c for c in summary["status_board"]}
-
-        # Hidden-pattern / anomaly trend: derive from the highest-risk driver
         high_counties = [c for c in summary["status_board"] if c["risk_level"] == "High"]
+        
         if high_counties:
             hidden_pattern_label = "Elevated"
             hidden_pattern_color = "text-rose-400"
@@ -333,7 +601,7 @@ def live_summary():
         else:
             hidden_pattern_label = "Normal"
             hidden_pattern_color = "text-emerald-400"
-
+        
         return jsonify({
             "status": "ok",
             "avg_climate": summary["avg_climate"],
@@ -343,94 +611,264 @@ def live_summary():
             "disease_risk": summary["avg_health"],
             "hidden_pattern": hidden_pattern_label,
             "hidden_pattern_color": hidden_pattern_color,
-            "system_status": "Connected",
+            "system_status": "Connected" if _ensure_db_connection() else "Degraded",
             "risk_map": risk_map,
             "last_sync": _eat_str(),
             "counties": summary["status_board"],
         }), 200
-
+    
     except Exception as e:
-        print(f"Live summary error: {e}")
+        logger.error("Live summary error: %s", e)
         return jsonify({
             "status": "error",
             "message": "Could not load live risk signals right now. Please try again."
         }), 500
 
 
+@app.route('/telemetry')
+def public_telemetry():
+    """Public telemetry page with county risk cards."""
+    summary = _build_status_board(force_recompute=False)
+    
+    return render_template(
+        'telemetry.html',
+        status_board=summary["status_board"],
+        avg_climate=summary["avg_climate"],
+        avg_health=summary["avg_health"],
+        high_risk_count=summary["high_risk_count"],
+        last_sync=_eat_str()
+    )
+
+
+@app.route('/api/v1/telemetry/refresh', methods=['GET'])
+@limiter.limit("10 per minute")
+def telemetry_refresh():
+    """
+    Public refresh for telemetry page.
+    Force-recomputes risk scores without full ingestion.
+    """
+    try:
+        summary = _build_status_board(force_recompute=True)
+        return jsonify({
+            "status": "ok",
+            "status_board": summary["status_board"],
+            "avg_climate": summary["avg_climate"],
+            "avg_health": summary["avg_health"],
+            "high_risk_count": summary["high_risk_count"],
+            "ingestion": {"skipped": "full external ingestion is admin-only; see /api/v1/admin/telemetry/refresh"},
+            "last_sync": _eat_str(),
+        }), 200
+    except Exception as e:
+        logger.error("Telemetry refresh error: %s", e)
+        return jsonify({
+            "status": "error",
+            "message": "We could not refresh the live telemetry data right now. Please try again."
+        }), 500
+
+
+# =====================================================================
+# ROUTES: AUTHENTICATION
+# =====================================================================
+
 @app.route('/dashboard')
 def dashboard():
-    """Serves the central AthGad AI operational telemetry board."""
+    """Serve the main dashboard."""
     if 'user_email' in session:
         return render_template('index.html')
-
+    
     flash("Please sign in to view your risk dashboard.", "warning")
     return redirect(url_for('login_page'))
 
 
-@app.route('/api/v1/health', methods=['GET'])
-def get_system_health():
-    """Returns the operational status of the AthGad API layer."""
-    return jsonify({
-        "status": "online",
-        "engine": "AthGad AI Engine v1.0",
-        "region_scope": "Eastern Kenya (8 Counties)"
-    }), 200
+@app.route('/register', methods=['GET'])
+def register_page():
+    """Show registration form."""
+    if 'user_email' in session:
+        return redirect(url_for('dashboard'))
+    return render_template('register.html')
 
+
+@app.route('/register', methods=['POST'])
+@limiter.limit("10 per hour")
+def handle_registration():
+    """Handle user registration."""
+    engine = get_db_engine()
+    
+    full_name = request.form.get('full_name', '').strip()
+    email = request.form.get('email', '').strip().lower()
+    phone_number = request.form.get('phone_number', '').strip()
+    password = request.form.get('password', '')
+    receive_email = 'receive_email' in request.form
+    receive_sms = 'receive_sms' in request.form
+    
+    normalized_phone, validation_error = _validate_registration_input(
+        full_name, email, phone_number, password)
+    
+    if validation_error:
+        audit("register", actor=email, outcome="invalid", details={"reason": validation_error})
+        flash(validation_error, "error")
+        return redirect(url_for('register_page'))
+    
+    try:
+        with engine.connect() as connection:
+            existing_user = connection.execute(text("""
+                SELECT user_code FROM users WHERE email = :email OR phone_number = :phone;
+            """), {"email": email, "phone": normalized_phone}).fetchone()
+        
+        if existing_user:
+            flash("An account with this email or phone number already exists. Please sign in instead.", "warning")
+            return redirect(url_for('register_page'))
+        
+        hashed_password = generate_password_hash(password)
+        
+        with engine.begin() as connection:
+            connection.execute(text("""
+                INSERT INTO users (user_code, full_name, email, phone_number, password_hash,
+                                   receive_email, is_subscribed, subscribe_sms, subscribe_email,
+                                   dispatch_preference)
+                VALUES (:user_code, :name, :email, :phone, :hash,
+                        :email_opt, :global_sub, :sms_opt, :email_opt,
+                        'sms');
+            """), {
+                "user_code": new_user_code(),
+                "name": full_name,
+                "email": email,
+                "phone": normalized_phone,
+                "hash": hashed_password,
+                "email_opt": receive_email,
+                "sms_opt": receive_sms,
+                "global_sub": receive_sms or receive_email
+            })
+        
+        session.clear()
+        session['user_email'] = email
+        session['user_name'] = full_name
+        session['user_role'] = 'citizen'
+        
+        flash("Registration successful! Welcome to AthGad AI. Activate your 30-day free premium trial for detailed risk reports via Alert Preferences.", "success")
+        return redirect(url_for('dashboard'))
+    
+    except sa_exc.IntegrityError as e:
+        logger.warning("Registration integrity error: %s", e)
+        flash("An account with this email or phone number already exists.", "warning")
+        return redirect(url_for('register_page'))
+    except Exception as e:
+        logger.error("Database error during registration: %s", e)
+        flash("Something went wrong on our side. Please try again.", "error")
+        return redirect(url_for('register_page'))
+
+
+@app.route('/login', methods=['GET'])
+def login_page():
+    """Show login form."""
+    if 'user_email' in session:
+        return redirect(url_for('dashboard'))
+    return render_template('login.html')
+
+
+@app.route('/login', methods=['POST'])
+@limiter.limit("10 per minute")
+def handle_login():
+    """Handle user login."""
+    engine = get_db_engine()
+    
+    email = request.form.get('email', '').strip().lower()
+    password_input = request.form.get('password', '')
+    
+    if not email or not password_input:
+        audit("login", actor=email, outcome="invalid", details={"reason": "missing_fields"})
+        flash("Please provide both your email address and password.", "error")
+        return redirect(url_for('login_page'))
+    
+    try:
+        with engine.connect() as connection:
+            user = connection.execute(text("""
+                SELECT full_name, email, password_hash, role
+                FROM users
+                WHERE email = :email;
+            """), {"email": email}).fetchone()
+        
+        if user and check_password_hash(user.password_hash, password_input):
+            role = getattr(user, 'role', None) or 'citizen'
+            session.clear()
+            session['user_email'] = user.email
+            session['user_name'] = user.full_name
+            session['user_role'] = role
+            audit("login", actor=email, outcome="success", details={"role": role})
+            flash(f"Welcome back, {user.full_name}! Your risk dashboard is ready.", "success")
+            if role == 'admin':
+                return redirect(url_for('admin_dashboard'))
+            return redirect(url_for('dashboard'))
+        else:
+            audit("login", actor=email, outcome="failed", details={"reason": "bad_credentials"})
+            flash("Incorrect email or password. Please try again.", "error")
+            return redirect(url_for('login_page'))
+    
+    except Exception as e:
+        logger.error("Database error during authentication: %s", e)
+        audit("login", actor=email, outcome="error", details={"reason": str(e)})
+        flash("Something went wrong on our side. Please try again.", "error")
+        return redirect(url_for('login_page'))
+
+
+@app.route('/logout', methods=['GET'])
+def handle_logout():
+    """Log out user safely."""
+    session.clear()
+    flash("You have been signed out safely.", "info")
+    return redirect(url_for('login_page'))
+
+
+# =====================================================================
+# ROUTES: API (Protected)
+# =====================================================================
 
 @app.route('/api/v1/risk-status', methods=['GET'])
 def get_realtime_risk_status():
     """
-    Executes live data fusion, appends localized county vulnerabilities,
-    evaluates alert thresholds, and logs markers directly to PostgreSQL.
+    Get real-time risk status for a specific county.
+    Public endpoint but requires active session for alerts.
     """
     target_county = request.args.get('county', default='Kitui')
-
+    
     try:
-        # 1. Trigger AI Core calculations
         risk_data = analytics_engine.calculate_composite_risk(target_county)
-
-        # 2. Extract the dynamic risk level status string cleanly
         current_severity = risk_data.get("risk_level", "Medium")
-
-        # 3. Assign a dynamic hazard profile category based on severity/location
-        if current_severity == "High" or target_county in ["Makueni", "Machakos", "Isiolo"]:
-            live_calamity = "Flash Floods, Severe Landslides & Waterborne Outbreaks"
-        else:
-            live_calamity = "Severe Multi-Season Drought & Agricultural Deficits"
-
-        # 4. Enrich payload using our safe multi-parameter function
+        live_calamity = calamity_for(target_county, current_severity)
         risk_data["county"] = target_county
         risk_data["calamity_type"] = live_calamity
         risk_data["advisory"] = get_county_advisory(target_county, live_calamity)
-
-        # 5. Pass clean parameters to notification loops. Dispatch runs on a
-        #    background thread so SMS/email sends never block the API response.
-        alert_service.engine = get_db_engine()
-        _alert_payload = dict(risk_data)
-        threading.Thread(
-            target=alert_service.dispatch_critical_notification,
-            args=(target_county, _alert_payload),
-            daemon=True,
-        ).start()
-
-        # 6. Format numerical score to percentage string safely for JSON response
+        
+        # Queue alert dispatch if user is authenticated
+        if 'user_email' in session:
+            _dispatch_engine = get_db_engine()
+            notification_queue.enqueue(
+                alert_service.dispatch_critical_notification,
+                target_county,
+                dict(risk_data),
+                _dispatch_engine,
+            )
+        
         score_val = risk_data.get("composite_risk_score", 0.0)
         if isinstance(score_val, (int, float)) and score_val <= 1.0:
             risk_data["composite_risk_score"] = f"{round(score_val * 100, 1)}%"
-
+        
         return jsonify(risk_data), 200
-
+    
     except Exception as e:
-        print(f"Backend route exception intercepted: {str(e)}")
-        return jsonify({"status": "error", "message": "We could not update the risk information right now. Please try again in a moment."}), 500
+        logger.error("Risk status error: %s", e)
+        return jsonify({
+            "status": "error",
+            "message": "We could not update the risk information right now. Please try again in a moment."
+        }), 500
 
 
 @app.route('/api/v1/alerts/history', methods=['GET'])
 def get_alert_history():
-    """Queries PostgreSQL to pull the latest system calculation for each of the covered counties."""
+    """Get alert history for all covered counties."""
     engine = get_db_engine()
     covered_counties = COVERED_COUNTIES
-
+    
     query = """
         SELECT alert_code, timestamp::text, county, calculated_score, risk_level, notified
         FROM (
@@ -440,30 +878,26 @@ def get_alert_history():
         ) sub
         WHERE rn = 1;
     """
-
+    
     try:
         with engine.connect() as connection:
             result = connection.execute(text(query))
             db_records = {row.county: row for row in result}
-
+        
         status_board = []
         for county in covered_counties:
             has_record = county in db_records
             record = db_records[county] if has_record else None
             risk_level = record.risk_level if has_record else "Low"
-
-            if risk_level == "High" or county in ["Makueni", "Machakos", "Isiolo"]:
-                live_calamity = "Flash Floods, Severe Landslides & Waterborne Outbreaks"
-            else:
-                live_calamity = "Severe Multi-Season Drought & Agricultural Deficits"
-
+            
+            live_calamity = calamity_for(county, risk_level)
             county_profile = get_county_advisory(county, live_calamity)
             calamity_label = county_profile.get("primary_calamity", live_calamity)
-
+            
             if has_record:
                 raw_score = float(record.calculated_score)
                 formatted_score = f"{round(raw_score * 100, 1)}%" if raw_score <= 1.0 else f"{raw_score}%"
-
+                
                 status_board.append({
                     "alert_code": record.alert_code,
                     "timestamp": record.timestamp,
@@ -483,161 +917,14 @@ def get_alert_history():
                     "risk_level": "Low",
                     "notified": False
                 })
-
+        
         return jsonify(status_board), 200
-
+    
     except Exception as e:
-        return jsonify({"status": "error", "message": "We could not load the county status updates right now. Please try again later."}), 500
-
-
-@app.route('/telemetry')
-def public_telemetry():
-    """
-    Public telemetry route: queries PostgreSQL and analytics models
-    to populate dynamic climate & health hazards and county cards.
-    """
-    summary = _build_status_board()
-
-    return render_template(
-        'telemetry.html',
-        status_board=summary["status_board"],
-        avg_climate=summary["avg_climate"],
-        avg_health=summary["avg_health"],
-        high_risk_count=summary["high_risk_count"],
-        last_sync=_eat_str()
-    )
-
-
-@app.route('/api/v1/admin/risk-trend', methods=['GET'])
-@admin_required
-@limiter.limit("20 per minute")
-def admin_risk_trend():
-    """
-    Returns per-county 7-day risk trajectory series for the admin overview
-    line graph. Admin-only endpoint.
-
-    The current score comes from the latest persisted risk record when one is
-    available (cheap); only counties with no record yet are live-recomputed.
-    The 7-day forecast is derived from the analytics engine per county.
-    """
-    try:
-        labels = []
-        now = _eat_now()
-        for i in range(7):
-            d = now + timedelta(days=i)
-            labels.append(d.strftime("%b %d"))
-
-        # Latest persisted record per county (used as the 'current' anchor).
-        engine = get_db_engine()
-        latest_query = """
-            SELECT alert_code, county, calculated_score, risk_level
-            FROM (
-                SELECT alert_code, county, calculated_score, risk_level,
-                       ROW_NUMBER() OVER (PARTITION BY county ORDER BY timestamp DESC) as rn
-                FROM risk_alerts
-            ) sub
-            WHERE rn = 1;
-        """
-        try:
-            with engine.connect() as connection:
-                result = connection.execute(text(latest_query))
-                records = {row.county: row for row in result}
-        except Exception as e:
-            print(f"Risk trend records warning: {e}")
-            records = {}
-
-        series = []
-        for county in COVERED_COUNTIES:
-            try:
-                record = records.get(county)
-                if record:
-                    raw = float(record.calculated_score)
-                    current = round(raw * 100, 1) if raw <= 1.0 else round(raw, 1)
-                else:
-                    # No persisted record yet -> live recompute (also persists).
-                    live = analytics_engine.calculate_composite_risk(county)
-                    current = round(float(live.get("composite_risk_score", 0.3)) * 100, 1)
-
-                # Forecast a full 7-day window starting today (values are 0..1
-                # decimals). Every point is a distinct dynamic prediction and
-                # the window rolls forward automatically to the next 7 days
-                # once the first day passes.
-                forecast = analytics_engine.forecast_risk(
-                    county=county, horizon=7, start_offset=0)
-                scores = forecast.get("scores", [])
-                trend = forecast.get("trend", "stable")
-
-                # Build a 7-point trajectory from the forecast scores (0..1).
-                points = [round(s, 4) for s in scores]
-                if not points:
-                    points = [round(current / 100.0, 4)]
-                # Pad/truncate to exactly 7 points.
-                if len(points) < 7:
-                    points.extend([points[-1]] * (7 - len(points)))
-                points = points[:7]
-            except Exception as e:
-                print(f"Risk trend error ({county}): {e}")
-                current = 0.0
-                points = [0.0] * 7
-                trend = "stable"
-
-            series.append({
-                "county": county,
-                "trend": trend,
-                "points": points,
-                "current": current,
-            })
-
-        # The recompute path may have inserted fresh rows for missing counties.
-        prune_risk_alerts(engine, keep_days=30)
-
-        return jsonify({
-            "status": "ok",
-            "labels": labels,
-            "series": series,
-            "last_sync": _eat_str(),
-        }), 200
-
-    except Exception as e:
-        print(f"Risk trend endpoint error: {e}")
+        logger.error("Alert history error: %s", e)
         return jsonify({
             "status": "error",
-            "message": "Could not load risk trend data right now."
-        }), 500
-
-
-@app.route('/api/v1/telemetry/refresh', methods=['GET'])
-@limiter.limit("10 per minute")
-def telemetry_refresh():
-    """
-    FULL live refresh for the public telemetry page.
-
-    Refreshes data for ALL covered counties in a single request: it re-runs
-    the health/climate/space-weather ingestion first, then force-recomputes the
-    composite risk for every county (force_recompute=True) so the returned
-    status board is genuinely real-time — not a cached snapshot.
-
-    Rate-limited to 10 req/min so anonymous visitors cannot spam the expensive
-    external ingestions and per-county ML recomputations.
-    """
-    try:
-        ingestion = run_all_ingestion()
-        summary = _build_status_board(force_recompute=True)
-        return jsonify({
-            "status": "ok",
-            "status_board": summary["status_board"],
-            "avg_climate": summary["avg_climate"],
-            "avg_health": summary["avg_health"],
-            "high_risk_count": summary["high_risk_count"],
-            "ingestion": ingestion,
-            "last_sync": _eat_str(),
-        }), 200
-
-    except Exception as e:
-        print(f"Admin telemetry refresh error: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "We could not refresh the live telemetry data right now. Please try again."
+            "message": "We could not load the county status updates right now. Please try again later."
         }), 500
 
 
@@ -645,221 +932,24 @@ def telemetry_refresh():
 @admin_required
 @limiter.limit("10 per hour")
 def ingest_all_data():
-    """
-    On-demand ingestion of health, climate and space-weather data.
-    Admin-only so anonymous visitors cannot trigger external API calls.
-    """
+    """Admin-only endpoint for data ingestion."""
     try:
         results = run_all_ingestion()
         return jsonify({"status": "ok", "ingestion": results}), 200
     except Exception as e:
-        print(f"Ingestion endpoint error: {e}")
+        logger.error("Ingestion endpoint error: %s", e)
         return jsonify({
             "status": "error",
             "message": "Ingestion failed. See server logs for details."
         }), 500
 
 
-@app.route('/api/v1/admin/telemetry/refresh', methods=['GET'])
-@admin_required
-@limiter.limit("30 per minute")
-def admin_telemetry_refresh():
-    """
-    Force-recomputes the live composite risk for every covered county and
-    returns the FULL system analytics payload. Admin-only endpoint used by the
-    System Analytics page's Refresh button so expensive ML recomputation cannot
-    be triggered by anonymous visitors. Ingested health/climate/space-weather
-    data is refreshed first so the recompute works with the latest surveillance
-    records, and old risk_alerts rows are pruned after each run.
-    """
-    try:
-        ingestion = run_all_ingestion()
-        summary = _build_status_board(force_recompute=True)
-        # Re-aggregate the full analytics (KPIs, distribution, board, panel)
-        # from the freshly recomputed records so the refresh updates every
-        # widget on the analytics page, not just the charts.
-        analytics = get_analytics(get_db_engine())
-        return jsonify({
-            "status": "ok",
-            "analytics": analytics,
-            "ingestion": ingestion,
-            "last_sync": _eat_str(),
-        }), 200
-
-    except Exception as e:
-        print(f"Admin telemetry refresh error: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "We could not refresh the live telemetry data right now. Please try again."
-        }), 500
-
-
-@app.route('/api/v1/admin/analytics/summary', methods=['GET'])
-@admin_required
-@limiter.limit("60 per minute")
-def admin_analytics_summary():
-    """
-    LIGHTWEIGHT analytics snapshot for the System Analytics page. Reads the
-    latest persisted risk records (same realtime output the dashboard shows)
-    and only live-recomputes counties with no record yet. Unlike the Refresh
-    endpoint it does NOT re-ingest or force-recompute, so it is cheap enough to
-    poll for auto-refresh. Returns the same analytics dict shape as
-    /api/v1/admin/telemetry/refresh so the front-end reuses one renderer.
-    """
-    try:
-        engine = get_db_engine()
-        analytics = get_analytics(engine)
-        return jsonify({
-            "status": "ok",
-            "analytics": analytics,
-            "last_sync": _eat_str(),
-        }), 200
-    except Exception as e:
-        print(f"Admin analytics summary error: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "Could not load the analytics summary right now."
-        }), 500
-
-
 # =====================================================================
-# CITIZEN REGISTRATION & AUTHENTICATION
-# =====================================================================
-
-@app.route('/register', methods=['GET'])
-def register_page():
-    if 'user_email' in session:
-        return redirect(url_for('dashboard'))
-    return render_template('register.html')
-
-
-@app.route('/register', methods=['POST'])
-@limiter.limit("10 per hour")
-def handle_registration():
-    engine = get_db_engine()
-
-    full_name = request.form.get('full_name', '').strip()
-    email = request.form.get('email', '').strip().lower()
-    phone_number = request.form.get('phone_number', '').strip()
-    password = request.form.get('password', '')
-    receive_email = 'receive_email' in request.form
-    receive_sms = 'receive_sms' in request.form
-
-    if not full_name or not email or not phone_number or not password:
-        audit("register", actor=email, outcome="invalid", details={"reason": "missing_fields"})
-        flash("Please fill in all the required fields to create your alert profile.", "error")
-        return redirect(url_for('register_page'))
-
-    try:
-        with engine.connect() as connection:
-            existing_user = connection.execute(text("""
-                SELECT user_code FROM users WHERE email = :email OR phone_number = :phone;
-            """), {"email": email, "phone": phone_number}).fetchone()
-
-        if existing_user:
-            flash("An account with this email or phone number already exists. Please sign in instead.", "warning")
-            return redirect(url_for('register_page'))
-
-        hashed_password = generate_password_hash(password)
-
-        with engine.begin() as connection:
-            connection.execute(text("""
-                INSERT INTO users (user_code, full_name, email, phone_number, password_hash,
-                                   receive_email, is_subscribed, subscribe_sms, subscribe_email,
-                                   dispatch_preference)
-                VALUES (:user_code, :name, :email, :phone, :hash,
-                        :email_opt, :global_sub, :sms_opt, :email_opt,
-                        'sms');
-            """), {
-                "user_code": new_user_code(),
-                "name": full_name,
-                "email": email,
-                "phone": phone_number,
-                "hash": hashed_password,
-                "email_opt": receive_email,
-                "sms_opt": receive_sms,
-                "global_sub": receive_sms or receive_email
-            })
-
-        session['user_email'] = email
-        session['user_name'] = full_name
-        session['user_role'] = 'citizen'
-
-        flash("Registration successful! Welcome to AthGad AI. Activate your 30-day free premium trial for detailed risk reports via Alert Preferences.", "success")
-        return redirect(url_for('dashboard'))
-
-    except Exception as e:
-        print(f"Database error encountered during registration: {e}")
-        flash("Something went wrong on our side. Please try again.", "error")
-        return redirect(url_for('register_page'))
-
-
-@app.route('/login', methods=['GET'])
-def login_page():
-    if 'user_email' in session:
-        return redirect(url_for('dashboard'))
-    return render_template('login.html')
-
-
-@app.route('/login', methods=['POST'])
-@limiter.limit("10 per minute")
-def handle_login():
-    engine = get_db_engine()
-
-    email = request.form.get('email', '').strip().lower()
-    password_input = request.form.get('password', '')
-
-    if not email or not password_input:
-        audit("login", actor=email, outcome="invalid", details={"reason": "missing_fields"})
-        flash("Please provide both your email address and password.", "error")
-        return redirect(url_for('login_page'))
-
-    try:
-        with engine.connect() as connection:
-            user = connection.execute(text("""
-                SELECT full_name, email, password_hash, role
-                FROM users
-                WHERE email = :email;
-            """), {"email": email}).fetchone()
-
-        if user and check_password_hash(user.password_hash, password_input):
-            role = getattr(user, 'role', None) or 'citizen'
-            # Prevent session fixation: build a fresh session on login.
-            session.clear()
-            session['user_email'] = user.email
-            session['user_name'] = user.full_name
-            session['user_role'] = role
-            audit("login", actor=email, outcome="success", details={"role": role})
-            flash(f"Welcome back, {user.full_name}! Your risk dashboard is ready.", "success")
-            if role == 'admin':
-                return redirect(url_for('admin_dashboard'))
-            return redirect(url_for('dashboard'))
-        else:
-            audit("login", actor=email, outcome="failed", details={"reason": "bad_credentials"})
-            flash("Incorrect email or password. Please try again.", "error")
-            return redirect(url_for('login_page'))
-
-    except Exception as e:
-        print(f"Database error encountered during user authentication: {e}")
-        audit("login", actor=email, outcome="error", details={"reason": str(e)})
-        flash("Something went wrong on our side. Please try again.", "error")
-        return redirect(url_for('login_page'))
-
-
-@app.route('/logout', methods=['GET'])
-def handle_logout():
-    """Wipes active session state tokens, signing out the user safely."""
-    session.clear()
-    flash("You have been signed out safely.", "info")
-    return redirect(url_for('login_page'))
-
-
-# =====================================================================
-# PROFILE MANAGEMENT (Citizens & Admins)
+# ROUTES: PROFILE
 # =====================================================================
 
 def _load_profile(email):
-    """Fetches the current profile fields for a user from the database."""
+    """Load user profile from database."""
     engine = get_db_engine()
     with engine.connect() as connection:
         row = connection.execute(text("""
@@ -868,8 +958,10 @@ def _load_profile(email):
             FROM users
             WHERE email = :email;
         """), {"email": email}).fetchone()
+    
     if not row:
         return None
+    
     return {
         "user_code": row.user_code,
         "full_name": row.full_name,
@@ -887,18 +979,13 @@ def _load_profile(email):
 @app.route('/profile', methods=['GET', 'POST'])
 @limiter.limit("20 per minute")
 def profile_page():
-    """
-    Shared profile page for citizens and admins.
-    GET: displays the current profile with an editable form.
-    POST: updates full name, phone number and county, and optionally changes
-          the password (requires the current password to be verified first).
-    """
+    """User profile management page."""
     if 'user_email' not in session:
         flash("Please sign in to manage your profile.", "warning")
         return redirect(url_for('login_page'))
-
+    
     email = session['user_email']
-
+    
     if request.method == 'POST':
         full_name = request.form.get('full_name', '').strip()
         phone_number = request.form.get('phone_number', '').strip()
@@ -906,15 +993,20 @@ def profile_page():
         current_password = request.form.get('current_password', '')
         new_password = request.form.get('new_password', '')
         confirm_password = request.form.get('confirm_password', '')
-
+        
         if not full_name or not phone_number:
             flash("Please provide both your full name and phone number.", "error")
             return redirect(url_for('profile_page'))
-
+        
+        normalized_phone = _normalize_phone(phone_number)
+        if not normalized_phone:
+            flash("Please enter a valid Kenyan mobile number (e.g. 0712 345 678 or +254712345678).", "error")
+            return redirect(url_for('profile_page'))
+        
         if county and county not in COVERED_COUNTIES:
             flash("Please choose a valid county from the list.", "error")
             return redirect(url_for('profile_page'))
-
+        
         engine = get_db_engine()
         try:
             with engine.connect() as connection:
@@ -922,29 +1014,42 @@ def profile_page():
                     text("SELECT password_hash FROM users WHERE email = :email"),
                     {"email": email},
                 ).fetchone()
-
+                phone_in_use = connection.execute(
+                    text("SELECT 1 FROM users WHERE phone_number = :phone AND email <> :email LIMIT 1"),
+                    {"phone": normalized_phone, "email": email},
+                ).fetchone()
+                
+                if phone_in_use:
+                    flash("That phone number is already linked to another account.", "error")
+                    return redirect(url_for('profile_page'))
+            
             if not stored:
                 flash("Your account could not be found. Please sign in again.", "error")
                 return redirect(url_for('logout'))
-
+            
+            # Handle password change
             if new_password or confirm_password or current_password:
                 if not (current_password and new_password and confirm_password):
                     audit("profile_update", actor=email, outcome="failed",
                           details={"reason": "password_fields_incomplete"})
                     flash("Please fill in all the fields to update the password.", "error")
                     return redirect(url_for('profile_page'))
+                
                 if not check_password_hash(stored.password_hash, current_password):
                     audit("profile_update", actor=email, outcome="failed",
                           details={"reason": "wrong_current_password"})
                     flash("Your current password is incorrect. Password not changed.", "error")
                     return redirect(url_for('profile_page'))
-                if len(new_password) < 8:
-                    flash("Your new password must be at least 8 characters long.", "error")
+                
+                is_valid, error = _validate_password(new_password)
+                if not is_valid:
+                    flash(error, "error")
                     return redirect(url_for('profile_page'))
+                
                 if new_password != confirm_password:
                     flash("The new passwords you entered do not match.", "error")
                     return redirect(url_for('profile_page'))
-
+            
             with engine.begin() as connection:
                 connection.execute(text("""
                     UPDATE users
@@ -955,30 +1060,32 @@ def profile_page():
                     WHERE email = :email;
                 """), {
                     "name": full_name,
-                    "phone": phone_number,
+                    "phone": normalized_phone,
                     "county": county or None,
                     "new_hash": generate_password_hash(new_password) if new_password else None,
                     "email": email,
                 })
+        
         except Exception as e:
-            print(f"Profile update error: {e}")
+            logger.error("Profile update error: %s", e)
             flash("Could not save your profile changes. Please try again.", "error")
             return redirect(url_for('profile_page'))
-
+        
         session['user_name'] = full_name
         audit("profile_update", actor=email, outcome="success",
               details={"password_changed": bool(new_password)})
+        
         if new_password:
             flash("Password successfully changed!", "success")
         else:
             flash("Your profile has been updated successfully.", "success")
         return redirect(url_for('profile_page'))
-
+    
     profile = _load_profile(email)
     if not profile:
         flash("Your account could not be found. Please sign in again.", "error")
         return redirect(url_for('logout'))
-
+    
     return render_template(
         'profile.html',
         profile=profile,
@@ -989,23 +1096,18 @@ def profile_page():
 @app.route('/profile/delete', methods=['POST'])
 @limiter.limit("5 per minute")
 def delete_account():
-    """
-    Permanently deletes the signed-in user's account and every related record
-    from the database (dispatch logs, SMS delivery logs, unsubscriptions and
-    the users row itself). The current password must be supplied as a final
-    confirmation before anything is removed.
-    """
+    """Permanently delete user account."""
     if 'user_email' not in session:
         flash("Please sign in to manage your profile.", "warning")
         return redirect(url_for('login_page'))
-
+    
     email = session['user_email']
     password_input = request.form.get('password', '')
-
+    
     if not password_input:
         flash("Please enter your password to confirm account deletion.", "error")
         return redirect(url_for('profile_page'))
-
+    
     engine = get_db_engine()
     try:
         with engine.connect() as connection:
@@ -1013,20 +1115,20 @@ def delete_account():
                 text("SELECT password_hash, phone_number FROM users WHERE email = :email"),
                 {"email": email},
             ).fetchone()
-
+        
         if not stored:
             session.clear()
             flash("Your account no longer exists. You have been signed out.", "info")
             return redirect(url_for('landing'))
-
+        
         if not check_password_hash(stored.password_hash, password_input):
             audit("account_delete", actor=email, outcome="failed",
                   details={"reason": "wrong_password"})
             flash("Incorrect password. Your account was not deleted.", "error")
             return redirect(url_for('profile_page'))
-
+        
         phone_number = stored.phone_number
-
+        
         with engine.begin() as connection:
             connection.execute(
                 text("""
@@ -1047,12 +1149,13 @@ def delete_account():
                 text("DELETE FROM users WHERE email = :email;"),
                 {"email": email},
             )
+    
     except Exception as e:
-        print(f"Account deletion error: {e}")
+        logger.error("Account deletion error: %s", e)
         audit("account_delete", actor=email, outcome="error", details={"reason": str(e)})
         flash("Could not delete your account. Please try again.", "error")
         return redirect(url_for('profile_page'))
-
+    
     audit("account_delete", actor=email, outcome="success",
           details={"user_deleted": bool(deleted.rowcount)})
     session.clear()
@@ -1060,30 +1163,250 @@ def delete_account():
 
 
 # =====================================================================
-# SUBSCRIPTION & PAYMENT MANAGEMENT PIPELINE
+# ROUTES: UNSUBSCRIBE
+# =====================================================================
+
+@app.route('/unsubscribe', methods=['GET', 'POST'])
+def web_unsubscribe():
+    """
+    Click-to-unsubscribe page.
+    GET: Shows confirmation form.
+    POST: Performs the opt-out.
+    """
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        if not email and 'user_email' in session:
+            email = session['user_email']
+        if not email:
+            flash("We could not determine your account. Please sign in.", "warning")
+            return redirect(url_for('login_page'))
+        return _perform_unsubscribe(email)
+    
+    # GET: Check if token is provided
+    token = request.args.get('token')
+    email = None
+    
+    if token:
+        is_valid, result = _verify_unsub_token(token)
+        if is_valid:
+            email = result
+        else:
+            flash(result, "error")
+            return redirect(url_for('login_page'))
+    elif 'user_email' in session:
+        email = session['user_email']
+    else:
+        flash("Please sign in to change your alert preferences.", "warning")
+        return redirect(url_for('login_page'))
+    
+    return render_template("unsubscribe_confirm.html", email=email, token=token), 200
+
+
+def _perform_unsubscribe(email: str):
+    """Perform unsubscribe operation."""
+    engine = get_db_engine()
+    
+    try:
+        with engine.begin() as connection:
+            user = connection.execute(
+                text("SELECT full_name, subscribe_sms, subscribe_email FROM users WHERE email = :email"),
+                {"email": email}
+            ).fetchone()
+            
+            if not user:
+                flash("No account registered under that email address.", "error")
+                return redirect(url_for('dashboard'))
+            
+            result = connection.execute(text("""
+                UPDATE users
+                SET subscribe_email = False,
+                    is_subscribed = subscribe_sms,
+                    unsubscribed_at = NOW()
+                WHERE email = :email;
+            """), {"email": email})
+            
+            rows_affected = result.rowcount
+        
+        if rows_affected > 0:
+            logger.info("Email opt-out: email channel disabled for %s", email)
+            audit("unsubscribe", actor=email, outcome="success", details={"channel": "email"})
+            
+            alert_service.send_unsubscribe_confirmation(
+                name=user.full_name,
+                phone_number="",
+                email=email,
+                channel="email",
+                opt_sms=False,
+                opt_email=True
+            )
+            
+            return render_template("unsubscribe_success.html",
+                                   email=email, base_url=alert_service.base_url), 200
+        else:
+            flash("No account registered under that email address.", "error")
+            return redirect(url_for('dashboard'))
+    
+    except Exception as e:
+        logger.error("Unsubscribe error: %s", e)
+        flash("An error occurred processing your request. Please try again.", "error")
+        return redirect(url_for('dashboard'))
+
+
+@app.route('/unsubscribe/reason', methods=['GET', 'POST'])
+def unsubscribe_reason():
+    """Capture unsubscribe reason."""
+    engine = get_db_engine()
+    email = request.args.get('email') or session.get('user_email')
+    
+    if not email:
+        flash("We need your email address to continue.", "warning")
+        return redirect(url_for('login_page'))
+    
+    if request.method == 'POST':
+        suggested_answer = request.form.get('suggested_answer', '').strip()
+        free_text = request.form.get('free_text', '').strip()
+        reason = (free_text if free_text else suggested_answer)[:255]
+        
+        try:
+            with engine.begin() as connection:
+                user_row = connection.execute(
+                    text("SELECT full_name FROM users WHERE email = :email"),
+                    {"email": email}
+                ).fetchone()
+                
+                if not user_row:
+                    flash("No account registered under that email address.", "error")
+                    return redirect(url_for('login_page'))
+                
+                unsub_ref = _generate_unsub_ref(connection, user_row.full_name)
+                
+                connection.execute(text("""
+                    INSERT INTO unsubscriptions (unsub_ref, channel, reason, email)
+                    VALUES (:unsub_ref, 'email', :reason, :email)
+                """), {
+                    "unsub_ref": unsub_ref,
+                    "reason": reason,
+                    "email": email,
+                })
+            
+            logger.info("Unsubscribe reason recorded for %s: %s", email, reason)
+            flash("Thank you for your feedback! We appreciate your input.", "success")
+            return redirect(url_for('dashboard'))
+        
+        except Exception as e:
+            logger.error("Unsubscribe reason recording error: %s", e)
+            flash("Could not save your feedback. Please try again.", "error")
+            return redirect(url_for('unsubscribe_reason', email=email))
+    
+    return render_template('unsubscribe_reason.html', email=email)
+
+
+def _generate_unsub_ref(connection, full_name):
+    """Generate unique unsubscribe reference."""
+    escaped = full_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    existing = connection.execute(
+        text(
+            "SELECT unsub_ref FROM unsubscriptions "
+            "WHERE unsub_ref = :n OR unsub_ref LIKE :np ESCAPE '\\'"
+        ),
+        {"n": full_name, "np": f"{escaped}%"},
+    ).fetchall()
+    count = len(existing)
+    if count == 0:
+        return full_name
+    return f"{full_name}{count}"
+
+
+# =====================================================================
+# ROUTES: SMS CALLBACK
+# =====================================================================
+
+@app.route('/api/v1/sms/callback', methods=['POST'])
+@csrf.exempt
+@limiter.limit("30 per minute")
+def incoming_sms_callback():
+    """
+    Africa's Talking SMS gateway callback.
+    Handles incoming SMS messages (STOP replies are handled by AT directly).
+    """
+    from_number = request.form.get("from", "").strip()
+    text_content = request.form.get("text", "").strip().upper()
+    
+    logger.info("Incoming SMS from %s: '%s'", from_number, text_content)
+    audit("sms_callback", target=from_number, outcome="received", details={"text": text_content})
+    
+    if not from_number:
+        return jsonify({"status": "ignored", "reason": "No sender phone parameter found."}), 400
+    
+    engine = get_db_engine()
+    
+    # Normalize phone number for search
+    norm_number = from_number
+    if norm_number.startswith('+254'):
+        norm_number = norm_number[4:]
+    elif norm_number.startswith('254'):
+        norm_number = norm_number[3:]
+    elif norm_number.startswith('0'):
+        norm_number = norm_number[1:]
+    
+    search_query = f"%{norm_number}"
+    reason_map = {
+        "1": "Too many messages",
+        "2": "Not useful", 
+        "3": "Too expensive"
+    }
+    
+    if text_content in reason_map or len(text_content) > 1:
+        suggested_answer = reason_map.get(text_content, "")
+        reason_text = reason_map.get(text_content, text_content)
+        try:
+            with engine.begin() as connection:
+                user = connection.execute(
+                    text("SELECT email FROM users WHERE phone_number LIKE :phone_pattern"),
+                    {"phone_pattern": search_query}
+                ).fetchone()
+                if user:
+                    user_row = connection.execute(
+                        text("SELECT full_name FROM users WHERE email = :email"),
+                        {"email": user.email}
+                    ).fetchone()
+                    unsub_ref = _generate_unsub_ref(connection, user_row.full_name)
+                    connection.execute(text("""
+                        INSERT INTO unsubscriptions (unsub_ref, channel, reason, email)
+                        VALUES (:unsub_ref, 'sms', :reason, :email)
+                    """), {
+                        "unsub_ref": unsub_ref,
+                        "reason": reason_text,
+                        "email": user.email,
+                    })
+                    logger.info("Unsubscribe reason (SMS reply) from %s: %s", from_number, reason_text)
+        except Exception as e:
+            logger.error("SMS reason recording error: %s", e)
+    
+    return jsonify({"status": "received"}), 200
+
+
+# =====================================================================
+# ROUTES: SUBSCRIPTION
 # =====================================================================
 
 @app.route('/subscribe', methods=['GET', 'POST'])
 def subscribe_portal():
     """
-    Handles configuring user alert profiles.
-    Payment is NOT charged immediately — 30-day free trial starts on first subscribe.
-    After trial expires, user must pay 150 KES via M-PESA to continue.
-    If user unsubscribes mid-trial and resubscribes, remaining trial days carry over.
+    Subscription management portal with 30-day free trial and M-PESA payment.
     """
     if 'user_email' not in session:
         return redirect(url_for('login_page'))
-
+    
     email = session['user_email']
     engine = get_db_engine()
-
+    
     if request.method == 'POST':
         selected_mediums = request.form.getlist('dispatch_medium')
-
         sms_opted_in = 'sms' in selected_mediums
         email_opted_in = 'email' in selected_mediums
         global_active = (sms_opted_in or email_opted_in)
-
+        
         try:
             with engine.connect() as connection:
                 user = connection.execute(
@@ -1091,19 +1414,22 @@ def subscribe_portal():
                          "unsubscribed_at, subscribe_sms, subscribe_email, full_name FROM users WHERE email = :email"),
                     {"email": email}
                 ).fetchone()
-
+            
             if not user:
                 audit("subscribe", actor=email, outcome="failed", details={"reason": "invalid_session"})
                 flash("User session invalid.", "error")
                 return redirect(url_for('login_page'))
-
-            now = datetime.now()
+            
+            now = utc_now()
             phone_number = user.phone_number
             payment_status = user.payment_status
-
-            # ── M-PESA STK Push: If trial has expired, initiate payment ──
+            
+            # Check if payment is required (trial expired and not active)
             if payment_status == 'expired' or (user.trial_ends_at and user.trial_ends_at < now and payment_status != 'active'):
-                # Initiate STK push for 150 KES
+                if not Config.MPESA_ENABLED:
+                    flash("M-PESA payments are currently disabled. Please contact support.", "error")
+                    return redirect(url_for('subscribe_portal'))
+                
                 try:
                     stk_result = initiate_stk_push(
                         phone_number=phone_number,
@@ -1127,53 +1453,57 @@ def subscribe_portal():
                                 "global_sub": global_active,
                                 "email": email,
                             })
+                            
+                            conn.execute(text("""
+                                INSERT INTO mpesa_stk_requests
+                                    (checkout_id, user_email, phone_number, amount, status)
+                                VALUES (:cid, :email, :phone, :amount, 'pending')
+                                ON CONFLICT (checkout_id) DO NOTHING;
+                            """), {
+                                "cid": checkout_id,
+                                "email": email,
+                                "phone": phone_number or "",
+                                "amount": 150,
+                            })
+                        
                         flash("M-PESA STK Push sent! Please check your phone and enter your PIN to complete payment.", "info")
                         return redirect(url_for('subscribe_portal'))
                     else:
                         error_msg = stk_result.get("errorMessage", stk_result.get("error", "Unknown error"))
-                        print(f"M-PESA STK Push failed: {error_msg}")
+                        logger.error("M-PESA STK Push failed: %s", error_msg)
                         flash(f"Could not initiate M-PESA payment: {error_msg}. Please try again.", "error")
                         return redirect(url_for('subscribe_portal'))
                 except Exception as mpesa_err:
-                    print(f"M-PESA STK Push exception: {mpesa_err}")
+                    logger.error("M-PESA STK Push exception: %s", mpesa_err)
                     flash("Could not initiate M-PESA payment. Please try again later.", "error")
                     return redirect(url_for('subscribe_portal'))
-
-            # ── Normal trial/subscription flow (no payment required) ──
-            # Determine trial dates (carry over remaining days)
+            
+            # Handle trial (free or active)
             trial_started_at = user.trial_started_at
             trial_ends_at = user.trial_ends_at
             carried_over_days = 0
-
-            # Default: start a new trial
             new_trial_start = now
-            new_trial_end = now + timedelta(days=TRIAL_DAYS)
-
+            new_trial_end = now + timedelta(days=Config.TRIAL_DAYS)
+            
             if trial_started_at and trial_ends_at:
-                # Previously had a trial — check remaining days
-                if isinstance(trial_ends_at, str):
-                    trial_ends_at = datetime.fromisoformat(trial_ends_at)
-                if isinstance(trial_started_at, str):
-                    trial_started_at = datetime.fromisoformat(trial_started_at)
-
+                trial_ends_at = parse_dt(trial_ends_at)
+                trial_started_at = parse_dt(trial_started_at)
+                
                 if trial_ends_at > now:
-                    # Trial still active — carry over remaining days
                     remaining = (trial_ends_at - now).days
                     if remaining > 0:
                         carried_over_days = remaining
                         new_trial_end = now + timedelta(days=remaining)
-                        new_trial_start = trial_started_at  # preserve original start
+                        new_trial_start = trial_started_at
                     else:
                         new_trial_start = now
-                        new_trial_end = now + timedelta(days=TRIAL_DAYS)
+                        new_trial_end = now + timedelta(days=Config.TRIAL_DAYS)
                 else:
-                    # Trial expired — start fresh if payment_status is not 'active'
                     if payment_status != 'active':
                         new_trial_start = now
-                        new_trial_end = now + timedelta(days=TRIAL_DAYS)
-
+                        new_trial_end = now + timedelta(days=Config.TRIAL_DAYS)
+            
             with engine.begin() as conn:
-                # Track the subscription start date (only set when first subscribing)
                 conn.execute(text("""
                     UPDATE users
                     SET is_subscribed = :global_sub,
@@ -1193,13 +1523,11 @@ def subscribe_portal():
                     "email_sub": email_opted_in,
                     "trial_start": new_trial_start,
                     "trial_end": new_trial_end,
-                    "now_ts": datetime.now(),
+                    "now_ts": utc_now(),
                     "email": email
                 })
-
-            # Send trial welcome notification
+            
             if global_active:
-                alert_service.engine = engine
                 try:
                     with engine.connect() as conn:
                         user_row = conn.execute(
@@ -1207,32 +1535,29 @@ def subscribe_portal():
                             {"e": email}
                         ).fetchone()
                     if user_row:
-                        opt_sms = user_row.subscribe_sms
-                        opt_email = user_row.subscribe_email
                         alert_service.send_trial_notice(
                             name=user_row.full_name,
                             phone_number=user_row.phone_number,
                             email=user_row.email,
                             trial_end_date=new_trial_end.strftime("%Y-%m-%d"),
-                            opt_sms=opt_sms,
-                            opt_email=opt_email,
+                            opt_sms=user_row.subscribe_sms,
+                            opt_email=user_row.subscribe_email,
                             carried_over_days=carried_over_days,
                         )
                 except Exception as notify_err:
-                    print(f"Trial notice send warning: {notify_err}")
-
+                    logger.warning("Trial notice send warning: %s", notify_err)
+            
             if carried_over_days > 0:
                 flash(f"Your alert preferences are saved. {carried_over_days} free-trial day(s) carried over from your previous subscription — premium alerts resume now!", "success")
             else:
                 flash("Your alert preferences are saved. Your free trial has started!", "success")
             return redirect(url_for('dashboard'))
-
+        
         except Exception as e:
-            print(f"Subscription pipeline writing error: {e}")
+            logger.error("Subscription pipeline writing error: %s", e)
             flash("We could not update your alert preferences. Please try again.", "error")
             return redirect(url_for('subscribe_portal'))
-
-    # GET Logic: Extract status rows including trial info
+    
     try:
         with engine.connect() as connection:
             row = connection.execute(
@@ -1241,34 +1566,105 @@ def subscribe_portal():
                 {"e": email}
             ).fetchone()
     except Exception as e:
-        print(f"Routing Warning: Could not fetch initial state: {e}")
+        logger.warning("Routing Warning: Could not fetch initial state: %s", e)
         row = None
-
+    
     return render_template('subscribe.html', status=row)
 
+
+# =====================================================================
+# ROUTES: M-PESA CALLBACK
+# =====================================================================
 
 @app.route('/api/v1/mpesa/callback', methods=['POST'])
 @csrf.exempt
 @limiter.limit("20 per minute")
 def mpesa_callback():
     """
-    Webhook endpoint triggered asynchronously by Safaricom Daraja API when user enters PIN.
-    On success: set payment_status='active', send thank-you, clear trial.
-    On failure: set payment_status='failed'.
+    Safaricom Daraja API webhook endpoint.
+    Handles STK push callback with verification.
     """
-    data = request.get_json()
-    print(f"[M-PESA CALLBACK] {data}")
-
+    data = request.get_json(silent=True) or {}
+    logger.debug("M-PESA callback payload received")
+    
     try:
         stk_callback = data.get("Body", {}).get("stkCallback", {})
         result_code = stk_callback.get("ResultCode")
         checkout_id = stk_callback.get("CheckoutRequestID")
-
+        
+        if not checkout_id:
+            audit("mpesa_callback", target="", outcome="failed", details={"reason": "missing_checkout_id"})
+            return jsonify({"ResultCode": 1, "ResultDesc": "Invalid payload"}), 400
+        
+        # Source IP allowlist check
+        if not _mpesa_callback_ip_allowed(request.remote_addr):
+            audit("mpesa_callback", actor=request.remote_addr or "unknown", target=checkout_id,
+                  outcome="blocked", details={"reason": "ip_not_allowlisted"})
+            return jsonify({"ResultCode": 1, "ResultDesc": "Forbidden"}), 403
+        
         engine = get_db_engine()
-
+        
+        # Verify checkout ID exists and is pending
+        with engine.connect() as conn:
+            pending = conn.execute(text("""
+                SELECT user_email, phone_number, amount, status, mpesa_receipt
+                FROM mpesa_stk_requests WHERE checkout_id = :cid;
+            """), {"cid": checkout_id}).fetchone()
+        
+        if not pending:
+            audit("mpesa_callback", target=checkout_id, outcome="failed",
+                  details={"reason": "unknown_checkout"})
+            logger.warning("M-PESA callback rejected unknown CheckoutRequestID: %s", checkout_id)
+            return jsonify({"ResultCode": 1, "ResultDesc": "Unknown transaction"}), 400
+        
+        if pending.status != 'pending':
+            audit("mpesa_callback", target=checkout_id, outcome="blocked",
+                  details={"reason": "already_processed", "status": pending.status})
+            logger.warning("M-PESA callback rejected replay for CheckoutID %s (status=%s).", checkout_id, pending.status)
+            return jsonify({"ResultCode": 1, "ResultDesc": "Already processed"}), 400
+        
         if result_code == 0:
-            # Payment SUCCESSFUL
+            # Verify amount and phone number
+            callback_meta = (stk_callback.get("CallbackMetadata") or {}).get("Item", [])
+            meta = {str(item.get("Name", "")): item.get("Value") for item in callback_meta}
+            callback_amount = meta.get("Amount")
+            callback_phone = str(meta.get("PhoneNumber", "") or "")
+            receipt = str(meta.get("MpesaReceiptNumber", "") or "")
+            
+            expected_amount = int(pending.amount)
+            if callback_amount is None or int(callback_amount) != expected_amount:
+                audit("mpesa_callback", target=checkout_id, outcome="failed",
+                      details={"reason": "amount_mismatch", "expected": expected_amount, "got": callback_amount})
+                logger.warning("M-PESA callback amount mismatch for %s: expected %s, got %s", checkout_id, expected_amount, callback_amount)
+                return jsonify({"ResultCode": 1, "ResultDesc": "Amount mismatch"}), 400
+            
+            if callback_phone and _normalize_phone_digits(callback_phone) != _normalize_phone_digits(pending.phone_number):
+                audit("mpesa_callback", target=checkout_id, outcome="failed",
+                      details={"reason": "phone_mismatch"})
+                logger.warning("M-PESA callback phone mismatch for %s.", checkout_id)
+                return jsonify({"ResultCode": 1, "ResultDesc": "Phone mismatch"}), 400
+            
+            # Prevent receipt reuse
+            if receipt:
+                with engine.connect() as conn:
+                    used = conn.execute(text("""
+                        SELECT 1 FROM mpesa_stk_requests
+                        WHERE mpesa_receipt = :receipt AND checkout_id <> :cid
+                        LIMIT 1;
+                    """), {"receipt": receipt, "cid": checkout_id}).fetchone()
+                if used:
+                    audit("mpesa_callback", target=checkout_id, outcome="blocked",
+                          details={"reason": "receipt_reused", "receipt": receipt})
+                    logger.warning("M-PESA callback rejected reused receipt %s.", receipt)
+                    return jsonify({"ResultCode": 1, "ResultDesc": "Receipt reused"}), 400
+            
+            # Process successful payment
             with engine.begin() as conn:
+                conn.execute(text("""
+                    UPDATE mpesa_stk_requests
+                    SET status = 'success', completed_at = NOW(), mpesa_receipt = :receipt
+                    WHERE checkout_id = :cid;
+                """), {"receipt": receipt, "cid": checkout_id})
                 conn.execute(text("""
                     UPDATE users
                     SET payment_status = 'active',
@@ -1276,11 +1672,11 @@ def mpesa_callback():
                         trial_ends_at = NULL
                     WHERE mpesa_checkout_id = :cid;
                 """), {"cid": checkout_id})
-            audit("mpesa_callback", target=checkout_id or "", outcome="success")
-            print(f"[PAYMENT SUCCESS] Account marked active for CheckoutID: {checkout_id}")
-
+            
+            audit("mpesa_callback", target=checkout_id, outcome="success", details={"receipt": receipt})
+            logger.info("Payment success: account marked active for CheckoutID %s", checkout_id)
+            
             # Send thank-you notification
-            alert_service.engine = engine
             try:
                 with engine.connect() as conn:
                     user_row = conn.execute(
@@ -1296,342 +1692,43 @@ def mpesa_callback():
                         opt_email=user_row.subscribe_email
                     )
             except Exception as notify_err:
-                print(f"Thank-you notification warning: {notify_err}")
-
+                logger.warning("Thank-you notification warning: %s", notify_err)
+            
             return jsonify({"ResultCode": 0, "ResultDesc": "Accepted"}), 200
+        
         else:
-            # Payment cancelled or failed
+            # Payment failed or cancelled
             with engine.begin() as conn:
+                conn.execute(text("""
+                    UPDATE mpesa_stk_requests
+                    SET status = 'failed', completed_at = NOW()
+                    WHERE checkout_id = :cid;
+                """), {"cid": checkout_id})
                 conn.execute(text("""
                     UPDATE users
                     SET payment_status = 'failed',
                         is_subscribed = False
                     WHERE mpesa_checkout_id = :cid;
                 """), {"cid": checkout_id})
-            print(f"[PAYMENT FAILED/CANCELLED] CheckoutID: {checkout_id}")
+            
+            audit("mpesa_callback", target=checkout_id, outcome="failed", details={"result_code": result_code})
+            logger.info("Payment failed/cancelled for CheckoutID %s", checkout_id)
             return jsonify({"ResultCode": 0, "ResultDesc": "Acknowledged"}), 200
-
+    
     except Exception as e:
-        print(f"M-PESA Callback Execution Error: {e}")
+        logger.error("M-PESA callback execution error: %s", e)
         return jsonify({"ResultCode": 1, "ResultDesc": "Internal Error"}), 500
 
 
 # =====================================================================
-# UNSUBSCRIBE PIPELINES
-# =====================================================================
-
-@app.route('/unsubscribe', methods=['GET', 'POST'])
-def web_unsubscribe():
-    """
-    Click-to-unsubscribe for email recipients.
-
-    GET request (no mutation): shows a confirmation form so the user can
-    confirm they want to disable email alerts without accidentally being
-    unsubscribed by a plain link pre-fetch / crawler. The actual state
-    change only happens on the POST handler below (which is CSRF-protected).
-
-    POST request: performs the opt-out.
-    """
-    if request.method == 'POST':
-        email = request.form.get('email', '').strip().lower()
-        if not email and 'user_email' in session:
-            email = session['user_email']
-        if not email:
-            flash("We could not determine your account. Please sign in.", "warning")
-            return redirect(url_for('login_page'))
-
-        return _perform_unsubscribe(email)
-
-    # GET: resolve the target email and render a confirmation form.
-    email = request.args.get('email')
-    if not email:
-        if 'user_email' in session:
-            email = session['user_email']
-        else:
-            flash("Please sign in to change your alert preferences.", "warning")
-            return redirect(url_for('login_page'))
-
-    # Show a confirmation page (no mutation on GET).
-    return render_template_string("""
-    <!DOCTYPE html>
-    <html>
-    <body style="font-family: sans-serif; text-align: center; background-color: #020617; color: #f8fafc; padding-top: 80px; margin: 0;">
-        <div style="max-width: 450px; margin: 0 auto; background-color: #0f172a; padding: 40px; border: 1px solid #1e293b; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
-            <h2 style="color: #ef4444; margin-top: 0;">Unsubscribe from Email Alerts</h2>
-            <p style="color: #94a3b8; line-height: 1.6; font-size: 14px;">
-                You are about to stop receiving premium alert emails for
-                <strong style="color: #38bdf8;">{{ email }}</strong>.
-            </p>
-            <p style="color: #eab308; line-height: 1.6; font-size: 13px;">
-                Note: Important safety warnings for your county will still be sent when needed.
-            </p>
-            <form method="POST" action="/unsubscribe" style="margin-top: 24px;">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-                <input type="hidden" name="email" value="{{ email }}" />
-                <button type="submit"
-                        style="background-color: #ef4444; color: #ffffff; border: none; font-weight: bold;
-                               padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 14px;">
-                    Confirm Unsubscribe
-                </button>
-            </form>
-            <p style="color: #64748b; font-size: 12px; margin-top: 20px;">
-                <a href="/subscribe" style="color: #10b981;">Cancel — Keep my email alerts</a>
-            </p>
-        </div>
-    </body>
-    </html>
-    """, email=email), 200
-
-
-def _perform_unsubscribe(email: str):
-    """
-    Shared helper that mutates the user's email channel to disabled.
-    Used by the POST handler of /unsubscribe (CSRF-protected).
-    """
-    engine = get_db_engine()
-
-    try:
-        with engine.begin() as connection:
-            # Fetch user name before updating
-            user = connection.execute(
-                text("SELECT full_name, subscribe_sms, subscribe_email FROM users WHERE email = :email"),
-                {"email": email}
-            ).fetchone()
-
-            if not user:
-                flash("No account registered under that email address.", "error")
-                return redirect(url_for('dashboard'))
-
-            result = connection.execute(text("""
-                UPDATE users
-                SET subscribe_email = False,
-                    is_subscribed = subscribe_sms,
-                    unsubscribed_at = NOW()
-                WHERE email = :email;
-"""), {"email": email})
-
-            rows_affected = result.rowcount
-
-        if rows_affected > 0:
-            print(f"[EMAIL OPT-OUT] Email channel disabled for: {email}")
-            audit("unsubscribe", actor=email, outcome="success", details={"channel": "email"})
-
-            # Send polite confirmation with reason request
-            alert_service.engine = engine
-            alert_service.send_unsubscribe_confirmation(
-                name=user.full_name,
-                phone_number="",
-                email=email,
-                channel="email",
-                opt_sms=False,
-                opt_email=True
-            )
-
-            return render_template_string("""
-            <!DOCTYPE html>
-            <html>
-            <body style="font-family: sans-serif; text-align: center; background-color: #020617; color: #f8fafc; padding-top: 80px; margin: 0;">
-                <div style="max-width: 450px; margin: 0 auto; background-color: #0f172a; padding: 40px; border: 1px solid #1e293b; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
-                    <h2 style="color: #ef4444; margin-top: 0;">You Have Unsubscribed</h2>
-                    <p style="color: #94a3b8; line-height: 1.6; font-size: 14px;">You will no longer receive premium alert emails for <strong>{{ email }}</strong>.</p>
-                    <p style="color: #eab308; line-height: 1.6; font-size: 13px;">Note: Important safety warnings for your county will still be sent when needed.</p>
-                    <p style="color: #94a3b8; font-size: 12px; margin-top: 20px;">If you're willing, please tell us why:<br>
-                    <a href="{{ base_url }}/unsubscribe/reason?email={{ email }}" style="color: #38bdf8;">Share Your Feedback</a></p>
-                </div>
-            </body>
-            </html>
-            """, email=email, base_url=alert_service.base_url), 200
-        else:
-            flash("No account registered under that email address.", "error")
-            return redirect(url_for('dashboard'))
-
-    except Exception as e:
-        print(f"Web portal processing error for unsubscribe vector: {e}")
-        flash("An error occurred processing your request. Please try again.", "error")
-        return redirect(url_for('dashboard'))
-
-
-@app.route('/unsubscribe/reason', methods=['GET', 'POST'])
-def unsubscribe_reason():
-    """
-    Allows users to optionally provide a reason for unsubscribing.
-    On GET: show a form with suggested answers and free-text field.
-    On POST: store the reason in the unsubscriptions table.
-    """
-    engine = get_db_engine()
-    email = request.args.get('email') or session.get('user_email')
-
-    if not email:
-        flash("We need your email address to continue.", "warning")
-        return redirect(url_for('login_page'))
-
-    if request.method == 'POST':
-        suggested_answer = request.form.get('suggested_answer', '').strip()
-        free_text = request.form.get('free_text', '').strip()
-
-        # Combine: prefer free_text if provided, else suggested_answer
-        # Truncate to fit unsubscriptions.reason VARCHAR(255) to prevent overflow errors
-        reason = (free_text if free_text else suggested_answer)[:255]
-
-        try:
-            with engine.begin() as connection:
-                # Fetch the user's full name to build a readable primary key
-                user_row = connection.execute(
-                    text("SELECT full_name FROM users WHERE email = :email"),
-                    {"email": email}
-                ).fetchone()
-                if not user_row:
-                    flash("No account registered under that email address.", "error")
-                    return redirect(url_for('login_page'))
-
-                unsub_ref = _generate_unsub_ref(connection, user_row.full_name)
-
-                connection.execute(text("""
-                    INSERT INTO unsubscriptions (unsub_ref, channel, reason, email)
-                    VALUES (:unsub_ref, 'email', :reason, :email)
-                """), {
-                    "unsub_ref": unsub_ref,
-                    "reason": reason,
-                    "email": email,
-                })
-            print(f"[UNSUBSCRIBE REASON] Recorded for {email}: {reason}")
-            flash("Thank you for your feedback! We appreciate your input.", "success")
-            return redirect(url_for('dashboard'))
-        except Exception as e:
-            print(f"Unsubscribe reason recording error: {e}")
-            flash("Could not save your feedback. Please try again.", "error")
-            return redirect(url_for('unsubscribe_reason', email=email))
-
-    return render_template('unsubscribe_reason.html', email=email)
-
-
-@app.route('/api/v1/sms/callback', methods=['POST'])
-@csrf.exempt
-@limiter.limit("30 per minute")
-def incoming_sms_callback():
-    """
-    Listens for webhook payloads from Africa's Talking SMS gateway.
-    STOP: disables SMS channel, records unsubscribed_at, sends polite confirmation.
-    Also handles reason replies (1, 2, 3, or free text).
-    """
-    from_number = request.form.get("from", "").strip()
-    text_content = request.form.get("text", "").strip().upper()
-
-    print(f"[WEBHOOK SIGNAL] Incoming SMS -> From: {from_number} Content: '{text_content}'")
-    audit("sms_callback", target=from_number, outcome="received", details={"text": text_content})
-
-    if not from_number:
-        return jsonify({"status": "ignored", "reason": "No sender phone parameter found."}), 400
-
-    engine = get_db_engine()
-
-    # Normalize phone number
-    norm_number = from_number
-    if norm_number.startswith('+254'):
-        norm_number = norm_number[4:]
-    elif norm_number.startswith('254'):
-        norm_number = norm_number[3:]
-    elif norm_number.startswith('0'):
-        norm_number = norm_number[1:]
-
-    search_query = f"%{norm_number}"
-
-    if text_content == "STOP":
-        try:
-            with engine.begin() as connection:
-                user = connection.execute(text("""
-                    SELECT full_name, subscribe_email, subscribe_sms
-                    FROM users
-                    WHERE phone_number LIKE :phone_pattern;
-                """), {"phone_pattern": search_query}).fetchone()
-
-                if not user:
-                    print(f"[PIPELINE ALERT] STOP keyword matched but no user record found for {from_number}")
-                    return jsonify({"status": "not_found", "message": "Phone vector does not exist in registry index."}), 200
-
-                # Disable SMS channel, record unsubscribed_at
-                result = connection.execute(text("""
-                    UPDATE users
-                    SET subscribe_sms = False,
-                        is_subscribed = CASE WHEN subscribe_email = True THEN True ELSE False END,
-                        unsubscribed_at = NOW()
-                    WHERE phone_number LIKE :phone_pattern;
-                """), {"phone_pattern": search_query})
-
-                rows_affected = result.rowcount
-
-            if rows_affected > 0:
-                print(f"[PIPELINE SUCCESS] SMS channel disabled for {from_number}")
-
-                # Send polite confirmation SMS with reason request
-                alert_service.engine = engine
-                alert_service.send_unsubscribe_confirmation(
-                    name=user.full_name,
-                    phone_number=from_number,
-                    email="",
-                    channel="sms",
-                    opt_sms=True,
-                    opt_email=False
-                )
-
-                return jsonify({"status": "success", "message": "SMS channel disabled successfully."}), 200
-
-        except Exception as e:
-            print(f"Webhook subscriber execution failed: {e}")
-            return jsonify({"status": "database_error", "message": str(e)}), 500
-
-    # Handle reason responses (1, 2, 3, or free text)
-    reason_map = {
-        "1": "Too many messages",
-        "2": "Not useful",
-        "3": "Too expensive"
-    }
-    if text_content in reason_map or len(text_content) > 1:
-        suggested_answer = reason_map.get(text_content, "")
-        reason_text = reason_map.get(text_content, text_content)
-        # Only record if we have a matching user
-        try:
-            with engine.begin() as connection:
-                user = connection.execute(
-                    text("SELECT email FROM users WHERE phone_number LIKE :phone_pattern"),
-                    {"phone_pattern": search_query}
-                ).fetchone()
-                if user:
-                    user_row = connection.execute(
-                        text("SELECT full_name FROM users WHERE email = :email"),
-                        {"email": user.email}
-                    ).fetchone()
-                    unsub_ref = _generate_unsub_ref(connection, user_row.full_name)
-                    connection.execute(text("""
-                        INSERT INTO unsubscriptions (unsub_ref, channel, reason, email)
-                        VALUES (:unsub_ref, 'sms', :reason, :email)
-                    """), {
-                        "unsub_ref": unsub_ref,
-                        "reason": reason_text,
-                        "email": user.email,
-                    })
-                    print(f"[UNSUBSCRIBE REASON] SMS reply from {from_number}: {reason_text}")
-        except Exception as e:
-            print(f"Reason recording error: {e}")
-
-    return jsonify({"status": "received"}), 200
-
-
-# =====================================================================
-# TRIAL EXPIRY CHECKER (callable via cron or on demand)
+# ROUTES: TRIAL EXPIRY CHECK
 # =====================================================================
 
 @app.route('/api/v1/check-trial-expiry', methods=['GET'])
 def check_trial_expiry():
     """
-    Scans all users whose trial has ended and payment_status is not 'active'.
-    Unsubscribes them (removes premium access, notifies).
-    Called periodically (e.g., via cron or scheduler).
-
-    Destructive, so it requires explicit opt-in via the TRIAL_EXPIRY_CRON
-    environment variable (set to "1") before it will act. Without it the
-    endpoint is a safe no-op, protecting users from accidental mass
-    unsubscription if the URL is hit by mistake or by scanners.
+    Check for expired trials and unsubscribe users.
+    Requires TRIAL_EXPIRY_CRON=1 environment variable.
     """
     if os.environ.get("TRIAL_EXPIRY_CRON", "").strip().lower() not in ("1", "true", "yes", "on"):
         return jsonify({
@@ -1640,12 +1737,11 @@ def check_trial_expiry():
             "message": ("Trial expiry scan is disabled. Set TRIAL_EXPIRY_CRON=1 "
                         "in the environment to enable it."),
         }), 200
-
+    
     engine = get_db_engine()
-    alert_service.engine = engine
-    now = datetime.now()
+    now = utc_now()
     expired_count = 0
-
+    
     try:
         with engine.connect() as connection:
             expired_users = connection.execute(text("""
@@ -1656,7 +1752,7 @@ def check_trial_expiry():
                   AND payment_status != 'active'
                   AND is_subscribed = True;
             """)).fetchall()
-
+        
         for user in expired_users:
             with engine.begin() as conn:
                 conn.execute(text("""
@@ -1667,11 +1763,10 @@ def check_trial_expiry():
                         unsubscribed_at = NOW()
                     WHERE email = :email;
                 """), {"email": user.email})
-
+            
             expired_count += 1
-            print(f"[TRIAL EXPIRED] {user.email}")
-
-            # Send trial expired notice
+            logger.info("Trial expired for user %s", user.email)
+            
             alert_service.send_trial_expired_notice(
                 name=user.full_name,
                 phone_number=user.phone_number,
@@ -1679,26 +1774,26 @@ def check_trial_expiry():
                 opt_sms=user.subscribe_sms,
                 opt_email=user.subscribe_email
             )
-
+        
         return jsonify({
             "status": "success",
             "expired_count": expired_count,
             "message": f"Checked trial expiry. {expired_count} user(s) expired."
         }), 200
-
+    
     except Exception as e:
-        print(f"Trial expiry check error: {e}")
+        logger.warning("Trial expiry check error: %s", e)
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # =====================================================================
-# ADMIN WORKSPACE
+# ROUTES: ADMIN
 # =====================================================================
 
 @app.route('/admin')
 @admin_required
 def admin_dashboard():
-    """Admin workspace landing page with system overview cards."""
+    """Admin workspace landing page."""
     audit("admin_view", actor=session.get('user_email'),
           outcome="view", details={"page": "overview"})
     engine = get_db_engine()
@@ -1713,128 +1808,16 @@ def admin_dashboard():
 @app.route('/admin/reports')
 @admin_required
 def admin_reports():
-    """Admin report generation hub — lists all available PDF reports."""
+    """Admin report generation hub."""
     audit("admin_view", actor=session.get('user_email'),
           outcome="view", details={"page": "reports"})
     return render_template('admin/reports.html')
 
 
-@app.route('/api/v1/admin/report-snapshot')
-@admin_required
-@limiter.limit("30 per minute")
-def admin_report_snapshot():
-    """
-    LIVE lightweight snapshot of the report-relevant system state.
-    Consumed by the reports hub so the subscribed/unsubscribed counts and
-    prediction coverage always reflect the current database — reports are
-    regenerated on every download, never cached or static.
-    """
-    try:
-        engine = get_db_engine()
-        snapshot = get_report_snapshot(engine)
-        return jsonify({"status": "ok", "snapshot": snapshot}), 200
-    except Exception as e:
-        print(f"Report snapshot error: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "Could not load the live report snapshot."
-        }), 500
-
-
-@app.route('/api/v1/admin/sms-delivery')
-@admin_required
-@limiter.limit("60 per minute")
-def admin_sms_delivery_api():
-    """
-    REALTIME SMS delivery debugging feed for admins. Returns the most recent
-    outbound SMS attempts (newest first) from sms_delivery_logs so an SMS issue
-    can be diagnosed live — status, Africa's Talking status, cost, message id,
-    and error detail — without grepping server logs or restarting the app.
-    """
-    try:
-        limit = request.args.get('limit', 100, type=int)
-        limit = max(1, min(limit, 500))
-        engine = get_db_engine()
-        logs = get_sms_delivery_logs(engine, limit=limit)
-        summary = {
-            "total": len(logs),
-            "success": sum(1 for l in logs if l["status"] == "SUCCESS"),
-            "failed": sum(1 for l in logs if l["status"] == "FAILED"),
-            "simulated": sum(1 for l in logs if l["status"] == "SIMULATED"),
-        }
-        return jsonify({
-            "status": "ok",
-            "summary": summary,
-            "logs": logs,
-            "last_sync": _eat_str(),
-        }), 200
-    except Exception as e:
-        print(f"SMS delivery API error: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "Could not load the SMS delivery logs right now."
-        }), 500
-
-
-@app.route('/admin/sms-delivery')
-@admin_required
-def admin_sms_delivery_page():
-    """Admin realtime SMS delivery debugging console (auto-refreshing)."""
-    audit("admin_view", actor=session.get('user_email'),
-          outcome="view", details={"page": "sms_delivery"})
-    return render_template('admin/sms_delivery.html',
-                           admin_name=session.get('user_name', 'Admin'))
-
-
-@app.route('/api/v1/admin/dispatch-logs')
-@admin_required
-@limiter.limit("60 per minute")
-def admin_dispatch_logs_api():
-    """
-    REALTIME alert-dispatch feed for admins. Returns the most recent tracked
-    SMS/email dispatches (newest first) from alert_dispatch_logs with the
-    recipient, the exact message sent, and the subscription status at dispatch
-    time. Powers the realtime admin console and feeds the downloadable report.
-    """
-    try:
-        limit = request.args.get('limit', 200, type=int)
-        limit = max(1, min(limit, 1000))
-        channel = (request.args.get('channel') or '').strip().lower()
-        status = (request.args.get('status') or '').strip().upper()
-        engine = get_db_engine()
-        logs = get_alert_dispatch_logs(engine, limit=limit)
-
-        if channel and channel != 'all':
-            logs = [l for l in logs if l["channel"] == channel]
-        if status and status != 'ALL':
-            logs = [l for l in logs if l["status"] == status]
-
-        summary = {
-            "total": len(logs),
-            "sms": sum(1 for l in logs if l["channel"] == "sms"),
-            "email": sum(1 for l in logs if l["channel"] == "email"),
-            "success": sum(1 for l in logs if l["status"] == "SUCCESS"),
-            "failed": sum(1 for l in logs if l["status"] == "FAILED"),
-            "simulated": sum(1 for l in logs if l["status"] == "SIMULATED"),
-        }
-        return jsonify({
-            "status": "ok",
-            "summary": summary,
-            "logs": logs,
-            "last_sync": _eat_str(),
-        }), 200
-    except Exception as e:
-        print(f"Dispatch logs API error: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "Could not load the alert dispatch logs right now."
-        }), 500
-
-
 @app.route('/admin/analytics')
 @admin_required
 def admin_analytics():
-    """Admin system analytics dashboard with charts and risk analysis."""
+    """Admin system analytics dashboard."""
     audit("admin_view", actor=session.get('user_email'),
           outcome="view", details={"page": "analytics"})
     engine = get_db_engine()
@@ -1849,7 +1832,7 @@ def admin_analytics():
 @app.route('/admin/users')
 @admin_required
 def admin_users():
-    """Admin user management page — list members and their roles."""
+    """Admin user management page."""
     audit("admin_view", actor=session.get('user_email'),
           outcome="view", details={"page": "users"})
     engine = get_db_engine()
@@ -1873,9 +1856,9 @@ def admin_users():
                 "subscribed_at": row.sub_at.strftime("%Y-%m-%d %H:%M") if row.sub_at else "—",
             })
     except Exception as e:
-        print(f"Admin users load error: {e}")
+        logger.error("Admin users load error: %s", e)
         flash("Could not load the user list.", "error")
-
+    
     return render_template(
         'admin/users.html',
         users=users,
@@ -1883,10 +1866,20 @@ def admin_users():
     )
 
 
+@app.route('/admin/sms-delivery')
+@admin_required
+def admin_sms_delivery_page():
+    """Admin SMS delivery debugging console."""
+    audit("admin_view", actor=session.get('user_email'),
+          outcome="view", details={"page": "sms_delivery"})
+    return render_template('admin/sms_delivery.html',
+                           admin_name=session.get('user_name', 'Admin'))
+
+
 @app.route('/admin/users/<string:user_code>/promote', methods=['POST'])
 @admin_required
 def admin_promote_user(user_code):
-    """Promotes a citizen account to the admin role. Audited."""
+    """Promote a citizen to admin role."""
     engine = get_db_engine()
     email = session.get('user_email')
     try:
@@ -1912,7 +1905,7 @@ def admin_promote_user(user_code):
               target=target.email, outcome="promote")
         flash(f"{target.email} promoted to Admin.", "success")
     except Exception as e:
-        print(f"Admin promote error: {e}")
+        logger.error("Admin promote error: %s", e)
         flash("Could not update the user role.", "error")
     return redirect(url_for('admin_users'))
 
@@ -1920,7 +1913,7 @@ def admin_promote_user(user_code):
 @app.route('/admin/users/<string:user_code>/demote', methods=['POST'])
 @admin_required
 def admin_demote_user(user_code):
-    """Demotes an admin back to the citizen role. Audited."""
+    """Demote an admin to citizen role."""
     engine = get_db_engine()
     email = session.get('user_email')
     try:
@@ -1946,24 +1939,230 @@ def admin_demote_user(user_code):
               target=target.email, outcome="demote")
         flash(f"{target.email} demoted to Citizen.", "success")
     except Exception as e:
-        print(f"Admin demote error: {e}")
+        logger.error("Admin demote error: %s", e)
         flash("Could not update the user role.", "error")
     return redirect(url_for('admin_users'))
+
+
+# =====================================================================
+# ROUTES: ADMIN API
+# =====================================================================
+
+@app.route('/api/v1/admin/risk-trend', methods=['GET'])
+@admin_required
+@limiter.limit("20 per minute")
+def admin_risk_trend():
+    """Get 7-day risk trend for admin charts."""
+    try:
+        labels = []
+        now = _eat_now()
+        for i in range(7):
+            d = now + timedelta(days=i)
+            labels.append(d.strftime("%b %d"))
+        
+        engine = get_db_engine()
+        latest_query = """
+            SELECT alert_code, county, calculated_score, risk_level
+            FROM (
+                SELECT alert_code, county, calculated_score, risk_level,
+                       ROW_NUMBER() OVER (PARTITION BY county ORDER BY timestamp DESC) as rn
+                FROM risk_alerts
+            ) sub
+            WHERE rn = 1;
+        """
+        try:
+            with engine.connect() as connection:
+                result = connection.execute(text(latest_query))
+                records = {row.county: row for row in result}
+        except Exception as e:
+            logger.warning("Risk trend records warning: %s", e)
+            records = {}
+        
+        series = []
+        for county in COVERED_COUNTIES:
+            try:
+                record = records.get(county)
+                if record:
+                    raw = float(record.calculated_score)
+                    current = round(raw * 100, 1) if raw <= 1.0 else round(raw, 1)
+                else:
+                    live = analytics_engine.calculate_composite_risk(county)
+                    current = round(float(live.get("composite_risk_score", 0.3)) * 100, 1)
+                
+                forecast = analytics_engine.forecast_risk(
+                    county=county, horizon=7, start_offset=0)
+                scores = forecast.get("scores", [])
+                trend = forecast.get("trend", "stable")
+                points = [round(s, 4) for s in scores]
+                if not points:
+                    points = [round(current / 100.0, 4)]
+                if len(points) < 7:
+                    points.extend([points[-1]] * (7 - len(points)))
+                points = points[:7]
+            except Exception as e:
+                logger.error("Risk trend error (%s): %s", county, e)
+                current = 0.0
+                points = [0.0] * 7
+                trend = "stable"
+            
+            series.append({
+                "county": county,
+                "trend": trend,
+                "points": points,
+                "current": current,
+            })
+        
+        prune_risk_alerts(engine, keep_days=30)
+        return jsonify({
+            "status": "ok",
+            "labels": labels,
+            "series": series,
+            "last_sync": _eat_str(),
+        }), 200
+    except Exception as e:
+        logger.error("Risk trend endpoint error: %s", e)
+        return jsonify({
+            "status": "error",
+            "message": "Could not load risk trend data right now."
+        }), 500
+
+
+@app.route('/api/v1/admin/telemetry/refresh', methods=['GET'])
+@admin_required
+@limiter.limit("30 per minute")
+def admin_telemetry_refresh():
+    """Force recompute all risk scores with full ingestion."""
+    try:
+        ingestion = run_all_ingestion()
+        summary = _build_status_board(force_recompute=True)
+        analytics = get_analytics(get_db_engine())
+        return jsonify({
+            "status": "ok",
+            "analytics": analytics,
+            "ingestion": ingestion,
+            "last_sync": _eat_str(),
+        }), 200
+    except Exception as e:
+        logger.error("Admin telemetry refresh error: %s", e)
+        return jsonify({
+            "status": "error",
+            "message": "We could not refresh the live telemetry data right now. Please try again."
+        }), 500
+
+
+@app.route('/api/v1/admin/analytics/summary', methods=['GET'])
+@admin_required
+@limiter.limit("60 per minute")
+def admin_analytics_summary():
+    """Get lightweight analytics summary."""
+    try:
+        engine = get_db_engine()
+        analytics = get_analytics(engine)
+        return jsonify({
+            "status": "ok",
+            "analytics": analytics,
+            "last_sync": _eat_str(),
+        }), 200
+    except Exception as e:
+        logger.error("Admin analytics summary error: %s", e)
+        return jsonify({
+            "status": "error",
+            "message": "Could not load the analytics summary right now."
+        }), 500
+
+
+@app.route('/api/v1/admin/report-snapshot')
+@admin_required
+@limiter.limit("30 per minute")
+def admin_report_snapshot():
+    """Get report snapshot for admin reports."""
+    try:
+        engine = get_db_engine()
+        snapshot = get_report_snapshot(engine)
+        return jsonify({"status": "ok", "snapshot": snapshot}), 200
+    except Exception as e:
+        logger.error("Report snapshot error: %s", e)
+        return jsonify({
+            "status": "error",
+            "message": "Could not load the live report snapshot."
+        }), 500
+
+
+@app.route('/api/v1/admin/sms-delivery')
+@admin_required
+@limiter.limit("60 per minute")
+def admin_sms_delivery_api():
+    """Get SMS delivery logs for admin debugging."""
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        limit = max(1, min(limit, 500))
+        engine = get_db_engine()
+        logs = get_sms_delivery_logs(engine, limit=limit)
+        summary = {
+            "total": len(logs),
+            "success": sum(1 for l in logs if l["status"] == "SUCCESS"),
+            "failed": sum(1 for l in logs if l["status"] == "FAILED"),
+            "simulated": sum(1 for l in logs if l["status"] == "SIMULATED"),
+        }
+        return jsonify({
+            "status": "ok",
+            "summary": summary,
+            "logs": logs,
+            "last_sync": _eat_str(),
+        }), 200
+    except Exception as e:
+        logger.error("SMS delivery API error: %s", e)
+        return jsonify({
+            "status": "error",
+            "message": "Could not load the SMS delivery logs right now."
+        }), 500
+
+
+@app.route('/api/v1/admin/dispatch-logs')
+@admin_required
+@limiter.limit("60 per minute")
+def admin_dispatch_logs_api():
+    """Get alert dispatch logs for admin debugging."""
+    try:
+        limit = request.args.get('limit', 200, type=int)
+        limit = max(1, min(limit, 1000))
+        channel = (request.args.get('channel') or '').strip().lower()
+        status = (request.args.get('status') or '').strip().upper()
+        engine = get_db_engine()
+        logs = get_alert_dispatch_logs(engine, limit=limit)
+        
+        if channel and channel != 'all':
+            logs = [l for l in logs if l["channel"] == channel]
+        if status and status != 'ALL':
+            logs = [l for l in logs if l["status"] == status]
+        
+        summary = {
+            "total": len(logs),
+            "sms": sum(1 for l in logs if l["channel"] == "sms"),
+            "email": sum(1 for l in logs if l["channel"] == "email"),
+            "success": sum(1 for l in logs if l["status"] == "SUCCESS"),
+            "failed": sum(1 for l in logs if l["status"] == "FAILED"),
+            "simulated": sum(1 for l in logs if l["status"] == "SIMULATED"),
+        }
+        return jsonify({
+            "status": "ok",
+            "summary": summary,
+            "logs": logs,
+            "last_sync": _eat_str(),
+        }), 200
+    except Exception as e:
+        logger.error("Dispatch logs API error: %s", e)
+        return jsonify({
+            "status": "error",
+            "message": "Could not load the alert dispatch logs right now."
+        }), 500
 
 
 @app.route('/admin/reports/<report_type>/pdf')
 @admin_required
 @limiter.limit("30 per minute")
 def admin_report_pdf(report_type):
-    """
-    Generates and streams a PDF report for the given report type.
-    Only admins may access this endpoint (enforced by the decorator),
-    and every download is recorded in the audit log. Rate-limited to
-    prevent unbounded report generation.
-
-    Optional query params `date_from` and `date_to` (YYYY-MM-DD) restrict every
-    section of the report to records inside that inclusive time span.
-    """
+    """Generate and stream PDF report."""
     allowed = {
         "predicted_calamities",
         "disease_outbreaks",
@@ -1976,10 +2175,10 @@ def admin_report_pdf(report_type):
               outcome="invalid", details={"report": report_type})
         flash("Unknown report type requested.", "error")
         return redirect(url_for('admin_reports'))
-
-    # Parse + validate the optional report time span (inclusive date range).
+    
     date_from_raw = request.args.get('date_from', '').strip()
     date_to_raw = request.args.get('date_to', '').strip()
+    
     try:
         date_from = datetime.strptime(date_from_raw, "%Y-%m-%d").date() if date_from_raw else None
         date_to = datetime.strptime(date_to_raw, "%Y-%m-%d").date() if date_to_raw else None
@@ -1987,40 +2186,36 @@ def admin_report_pdf(report_type):
         audit("admin_report", actor=session.get('user_email'),
               target=report_type, outcome="invalid",
               details={"reason": "bad_date_format"})
-        flash("Invalid date range. Dates must use the YYYY-MM-DD format "
-              "(4-digit year).", "error")
+        flash("Invalid date range. Dates must use the YYYY-MM-DD format.", "error")
         return redirect(url_for('admin_reports'))
-
-    # The year must be exactly four digits (enforced by %Y above) and cannot
-    # be beyond the current year.
+    
     current_year = _eat_now().year
     for label, value in (("start", date_from), ("end", date_to)):
         if value is not None and value.year > current_year:
             audit("admin_report", actor=session.get('user_email'),
                   target=report_type, outcome="invalid",
                   details={"reason": "future_year", "field": label})
-            flash(f"The {label} date cannot be in a year beyond {current_year}.",
-                  "error")
+            flash(f"The {label} date cannot be in a year beyond {current_year}.", "error")
             return redirect(url_for('admin_reports'))
-
+    
     if date_from and date_to and date_from > date_to:
         audit("admin_report", actor=session.get('user_email'),
               target=report_type, outcome="invalid",
               details={"reason": "from_after_to"})
         flash("The start date cannot be after the end date.", "error")
         return redirect(url_for('admin_reports'))
-
+    
     try:
         engine = get_db_engine()
         pdf_bytes = build_admin_report(
             engine, report_type, date_from=date_from, date_to=date_to,
         )
-
+        
         audit("admin_report", actor=session.get('user_email'),
               target=report_type, outcome="generated",
               details={"date_from": str(date_from) if date_from else None,
                        "date_to": str(date_to) if date_to else None})
-
+        
         filenames = {
             "predicted_calamities": "predicted_calamities_report.pdf",
             "disease_outbreaks": "disease_outbreaks_report.pdf",
@@ -2028,40 +2223,43 @@ def admin_report_pdf(report_type):
             "unsubscribed_members": "unsubscribed_members_report.pdf",
             "alert_dispatch_logs": "alert_dispatch_logs_report.pdf",
         }
+        
         if date_from or date_to:
             span = f"_{date_from or 'start'}_{date_to or 'today'}"
             filename = filenames[report_type].replace(".pdf", f"{span}.pdf")
         else:
             filename = filenames[report_type]
+        
         response = app.response_class(
             pdf_bytes,
             mimetype='application/pdf',
         )
-        response.headers['Content-Disposition'] = (
-            f'attachment; filename={filename}'
-        )
-        # Always regenerate: never let browsers/ISPs serve a stale cached copy.
+        response.headers['Content-Disposition'] = f'attachment; filename={filename}'
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
         response.headers['Expires'] = '0'
         return response
-
+    
     except ImportError:
-        flash("PDF generation library (reportlab) is not installed. "
-              "Run: pip install reportlab", "error")
+        flash("PDF generation library (reportlab) is not installed. Run: pip install reportlab", "error")
         return redirect(url_for('admin_reports'))
     except Exception as e:
-        print(f"PDF generation error: {e}")
+        logger.error("PDF generation error: %s", e)
         audit("admin_report", actor=session.get('user_email'),
               target=report_type, outcome="error", details={"error": str(e)})
         flash("Could not generate the PDF report. Please try again.", "error")
         return redirect(url_for('admin_reports'))
 
 
+# =====================================================================
+# APPLICATION ENTRY POINT
+# =====================================================================
+
 if __name__ == '__main__':
-    host = os.environ.get("FLASK_HOST", "127.0.0.1")
-    port = int(os.environ.get("FLASK_PORT", "5000"))
-    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
-    print(f"Starting AthGad AI REST Gateway Server on {host}:{port} "
-          f"(debug={debug})...")
-    app.run(host=host, port=port, debug=debug)
+    if Config.IS_PRODUCTION and Config.FLASK_DEBUG:
+        logger.warning("FLASK_DEBUG is enabled in production! This is a security risk.")
+    
+    logger.info("Starting AthGad AI REST Gateway Server on %s:%s (debug=%s, env=%s)...",
+                Config.FLASK_HOST, Config.FLASK_PORT, Config.FLASK_DEBUG, Config.ENVIRONMENT)
+    
+    app.run(host=Config.FLASK_HOST, port=Config.FLASK_PORT, debug=Config.FLASK_DEBUG)

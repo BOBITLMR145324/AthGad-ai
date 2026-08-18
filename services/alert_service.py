@@ -1,5 +1,7 @@
 import os
+import html
 import smtplib
+import logging
 import requests
 import urllib3
 import base64
@@ -12,6 +14,9 @@ from sqlalchemy import text
 from requests.adapters import HTTPAdapter, Retry
 from core.db_helper import get_db_engine
 from core.id_codes import new_dispatch_code
+from core.time_utils import utc_now, parse_dt
+
+logger = logging.getLogger(__name__)
 
 # Suppress SSL warnings only when SSL_VERIFY is explicitly disabled. When SSL
 # verification is enabled (default), warnings are not suppressed.
@@ -39,6 +44,10 @@ class AthGadAlertService:
         self.at_username = os.getenv("AT_USERNAME")
         self.at_api_key = os.getenv("AT_API_KEY")
         self.at_sender_id = os.getenv("AT_SENDER_ID", None)
+        # FIX: Strip the '+' symbol from sender ID if present, as many carriers reject it.
+        if self.at_sender_id and self.at_sender_id.startswith('+'):
+            self.at_sender_id = self.at_sender_id[1:]
+
         self.at_is_sandbox = os.getenv("AT_IS_SANDBOX", "false").lower() == "true" or self.at_username == "sandbox"
         # Dynamically switch API base URL based on environment mode
         if self.at_is_sandbox:
@@ -49,18 +58,19 @@ class AthGadAlertService:
         # Africa's Talking API readiness flag
         self._at_ready = bool(self.at_api_key and self.at_username)
         if self._at_ready:
-            print(f"✅ Africa's Talking REST API configured (mode: {'sandbox' if self.at_is_sandbox else 'production'}, username: {self.at_username})")
+            logger.info("Africa's Talking REST API configured (mode: %s, username: %s)",
+                        "sandbox" if self.at_is_sandbox else "production", self.at_username)
             # Sanity checks: catch the most common credential mistakes early.
             key_looks_sandbox = "sandbox" in (self.at_api_key or "").lower()
             if key_looks_sandbox and not self.at_is_sandbox:
-                print(f"⚠️  AT_API_KEY looks like a SANDBOX key but AT_IS_SANDBOX is not 'true'.")
-                print(f"   ↪ Set AT_IS_SANDBOX=true in config/.env (and use username 'sandbox') or use the PRODUCTION key.")
+                logger.warning("AT_API_KEY looks like a SANDBOX key but AT_IS_SANDBOX is not 'true'.")
+                logger.warning("Set AT_IS_SANDBOX=true in config/.env (and use username 'sandbox') or use the PRODUCTION key.")
             elif not key_looks_sandbox and self.at_is_sandbox and self.at_username != "sandbox":
-                print(f"⚠️  Sandbox mode is enabled but AT_USERNAME is '{self.at_username}' (usually 'sandbox' on the sandbox).")
+                logger.warning("Sandbox mode is enabled but AT_USERNAME is '%s' (usually 'sandbox' on the sandbox).", self.at_username)
         elif not self.at_api_key:
-            print(f"⚠️  Africa's Talking API key (AT_API_KEY) is missing in config/.env — SMS alerts will be simulated.")
+            logger.warning("Africa's Talking API key (AT_API_KEY) is missing in config/.env — SMS alerts will be simulated.")
         elif not self.at_username:
-            print(f"⚠️  Africa's Talking username (AT_USERNAME) is missing in config/.env — SMS alerts will be simulated.")
+            logger.warning("Africa's Talking username (AT_USERNAME) is missing in config/.env — SMS alerts will be simulated.")
 
         # SMTP Email Outbound Credentials
         self.sender_email = os.getenv("GMAIL_SENDER", os.getenv("ALERT_SENDER_EMAIL", "alerts@AthGad.ai"))
@@ -73,21 +83,40 @@ class AthGadAlertService:
         # recipients receive real, working links instead of hardcoded 127.0.0.1.
         self.base_url = os.getenv("APP_BASE_URL", "http://127.0.0.1:5000").rstrip("/")
         if self.base_url.startswith(("127.0.0.1", "localhost")):
-            print(f"⚠️  APP_BASE_URL not set in config/.env — email links point to {self.base_url}.")
-            print(f"   ↪ Set APP_BASE_URL to your real domain in production or the Unsubscribe link "
-                  f"inside alert emails will not work for recipients.")
+            logger.warning("APP_BASE_URL not set in config/.env — email links point to %s.", self.base_url)
+            logger.warning("Set APP_BASE_URL to your real domain in production or the Unsubscribe link "
+                           "inside alert emails will not work for recipients.")
+
+        # Dispatch cooldown (hours): repeat risk evaluations for the same county
+        # and risk level are suppressed inside this window so polling / refreshes
+        # never re-notify every user. A level CHANGE (e.g. Medium -> High) still
+        # dispatches immediately.
+        try:
+            self.dispatch_cooldown_hours = max(1, int(os.getenv("ALERT_DISPATCH_COOLDOWN_HOURS", "6")))
+        except (TypeError, ValueError):
+            self.dispatch_cooldown_hours = 6
 
     # ------------------------------------------------------------------
     # TIERED RISK ALERT DISPATCH
     # ------------------------------------------------------------------
-    def dispatch_critical_notification(self, county: str, risk_payload: dict):
+    def dispatch_critical_notification(self, county: str, risk_payload: dict, engine=None):
         """
         Evaluates regional anomalies and dispatches alerts to ALL users.
         Validates user trial periods and payment statuses against PostgreSQL.
         Channels are evaluated independently: a channel receives Premium details
         ONLY if the user has an active subscription or trial AND that channel is enabled.
         Otherwise, it falls back to the limited baseline alert.
+
+        `engine` is passed explicitly per call to avoid sharing a mutable engine
+        attribute across concurrent request threads. Falls back to self.engine
+        when not provided.
         """
+        if engine is None:
+            engine = self.engine
+        if engine is None:
+            logger.error("Alert Engine Error: Database engine context missing. Cannot verify subscribers.")
+            return False
+
         score = risk_payload.get("composite_risk_score", "0.0%")
         level = risk_payload.get("risk_level", "Low")
         metrics = risk_payload.get("metrics", {})
@@ -99,15 +128,20 @@ class AthGadAlertService:
             "proactive_solutions": advisory.get("proactive_solutions", []) if isinstance(advisory, dict) else []
         }
 
-        print(f"\n[ALERT ENGINE - {datetime.now()}] Evaluating risk vector for {county} County...")
+        logger.info("Alert Engine: evaluating risk vector for %s County...", county)
 
         # System Threshold Rule: Only trigger alerts for abnormal operational states
         if level not in ["Medium", "High"]:
-            print(f"Alert Engine: Current Risk level ({level}) is nominal. Dispatches suppressed.")
+            logger.info("Alert Engine: Current Risk level (%s) is nominal. Dispatches suppressed.", level)
             return False
 
-        if not self.engine:
-            print("Alert Engine Error: Database engine context missing. Cannot verify subscribers.")
+        # Dedup gate: atomically claim dispatch rights for this county+level.
+        # Without this, every /api/v1/risk-status poll or dashboard refresh
+        # re-sends SMS/email alerts to all subscribers. A claimed (already
+        # dispatched) county+level inside the cooldown window is skipped.
+        if not self._claim_dispatch(engine, county, level):
+            logger.info("Alert Engine: Duplicate dispatch for %s (%s) suppressed "
+                        "within the %dh cooldown window.", county, level, self.dispatch_cooldown_hours)
             return False
 
         try:
@@ -116,29 +150,27 @@ class AthGadAlertService:
             # Users with a NULL/empty county still receive all alerts (backward
             # compatible), while users with a county set only receive alerts for
             # that specific county.
-            with self.engine.connect() as connection:
+            with engine.connect() as connection:
                 rows = connection.execute(text("""
                     SELECT full_name, email, phone_number, is_subscribed,
                            subscribe_sms, subscribe_email, payment_status,
                            trial_ends_at, county, dispatch_preference
-                    FROM users;
-                """)).fetchall()
+                    FROM users
+                    WHERE county IS NULL
+                       OR LOWER(county) = LOWER(:county);
+                """), {"county": county}).fetchall()
 
-            # Per-county targeting: include a user if they have no specific
-            # county (legacy behaviour) OR if their county matches the alert.
-            subscribers = [
-                r for r in rows
-                if not (getattr(r, 'county', None) or '').strip()
-                or (getattr(r, 'county', None) or '').strip().lower() == county.lower()
-            ]
+            # Per-county targeting is now done in SQL: users with no specific
+            # county (legacy behaviour) OR whose county matches the alert.
+            subscribers = list(rows)
 
             if not subscribers:
-                print(f"Alert Engine Notice: No matching users found in database index for {county} County.")
+                logger.info("Alert Engine Notice: No matching users found in database index for %s County.", county)
                 return True
 
-            print(f"Alert Engine: Broadcasting verified channel-aware alerts for {len(subscribers)} user profiles (target: {county} County)...")
+            logger.info("Alert Engine: Broadcasting verified channel-aware alerts for %d user profiles (target: %s County)...", len(subscribers), county)
 
-            now = datetime.now()
+            now = utc_now()
 
             for sub in subscribers:
                 # ----------------------------------------------------
@@ -150,11 +182,7 @@ class AthGadAlertService:
                 # Check if trial is still active
                 is_trial_active = False
                 if trial_ends_at:
-                    if isinstance(trial_ends_at, str):
-                        try:
-                            trial_ends_at = datetime.fromisoformat(trial_ends_at)
-                        except ValueError:
-                            trial_ends_at = None
+                    trial_ends_at = parse_dt(trial_ends_at)
                     if trial_ends_at and trial_ends_at > now:
                         is_trial_active = True
 
@@ -187,6 +215,7 @@ class AthGadAlertService:
 
                 # Dispatch on opted-in channels; unsubscribed members get the
                 # baseline fallback channel selected above.
+                email_failover_sent = False
                 if opt_sms:
                     # Channel 1: SMS Delivery Pipeline (Africa's Talking)
                     sms_delivered = self._send_at_sms(
@@ -198,12 +227,15 @@ class AthGadAlertService:
                     # via the member's email so they are never left without a
                     # warning. Content tier follows the account's premium status.
                     if not sms_delivered and (getattr(sub, 'email', None) or '').strip():
-                        print(f"⚠️  SMS delivery failed for {sub.full_name}; failing over to email {sub.email}")
+                        logger.warning("SMS delivery failed for %s; failing over to email %s", sub.full_name, sub.email)
                         self._send_smtp_email(
                             sub.email, sub.full_name, county, level, score, calamity, metrics,
                             is_premium=account_is_premium, risk_advisory=risk_advisory)
+                        # Mark that email was already dispatched via failover so
+                        # the opt_email block below does NOT send a duplicate.
+                        email_failover_sent = True
 
-                if opt_email:
+                if opt_email and not email_failover_sent:
                     # Channel 2: EMAIL Delivery Pipeline
                     email_delivered = self._send_smtp_email(
                         sub.email, sub.full_name, county, level, score, calamity, metrics,
@@ -211,7 +243,7 @@ class AthGadAlertService:
 
                     # CHANNEL FAILOVER: If SMTP failed, try the member's phone.
                     if not email_delivered and (getattr(sub, 'phone_number', None) or '').strip():
-                        print(f"⚠️  Email delivery failed for {sub.full_name}; failing over to SMS {sub.phone_number}")
+                        logger.warning("Email delivery failed for %s; failing over to SMS %s", sub.full_name, sub.phone_number)
                         self._send_at_sms(
                             sub.phone_number, sub.full_name, county, level, calamity,
                             is_premium=account_is_premium, risk_advisory=risk_advisory)
@@ -219,8 +251,50 @@ class AthGadAlertService:
             return True
 
         except Exception as e:
-            print(f"Alert Engine infrastructure processing failure: {e}")
+            logger.error("Alert Engine infrastructure processing failure: %s", e)
             return False
+
+    def _claim_dispatch(self, engine, county: str, level: str) -> bool:
+        """
+        Atomically claims the right to dispatch an alert for a county+risk level.
+
+        Returns True when this call may proceed with the broadcast; False when
+        the same county+level was already dispatched within the cooldown window.
+
+        The claim is atomic (a single UPDATE that flips dispatched = TRUE) so two
+        concurrent risk-status calls cannot both pass the gate. If no matching
+        recent row exists at all (e.g. the risk row failed to persist), dispatch
+        is allowed to proceed so real alerts are never silently dropped.
+        """
+        try:
+            with engine.begin() as connection:
+                result = connection.execute(text("""
+                    UPDATE risk_alerts
+                    SET dispatched = TRUE
+                    WHERE county = :county
+                      AND risk_level = :level
+                      AND dispatched = FALSE
+                      AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                """), {"county": county, "level": level, "hours": self.dispatch_cooldown_hours})
+
+                if result.rowcount > 0:
+                    return True
+
+                # Nothing was claimed. If a recent row exists, it is already
+                # dispatched -> suppress. If none exists, dispatch anyway.
+                recent = connection.execute(text("""
+                    SELECT 1
+                    FROM risk_alerts
+                    WHERE county = :county
+                      AND risk_level = :level
+                      AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                    LIMIT 1
+                """), {"county": county, "level": level, "hours": self.dispatch_cooldown_hours}).fetchone()
+
+                return recent is None
+        except Exception as e:
+            logger.warning("Alert Engine dedup warning (%s, %s): %s", county, level, e)
+            return True
 
     # ------------------------------------------------------------------
     # SMS DISPATCH (tiered content)
@@ -254,7 +328,7 @@ class AthGadAlertService:
                 f"\n"
                 f"WHAT TO DO:\n{actions}\n"
                 f"\n"
-                f"Reply STOP to stop receiving these alerts."
+                f"Manage your alerts at {self.base_url}/dashboard"
             )
         return (
             f"AthGad AI: Safety alert for {county} County. "
@@ -308,8 +382,13 @@ class AthGadAlertService:
                 "to": phone_number,
                 "message": message_body
             }
-            if self.at_sender_id:
-                payload["from"] = self.at_sender_id
+            
+            # FIX: Only include 'from' if a sender ID is explicitly defined 
+            # and is not blacklisted. If omitted, Africa's Talking uses your default shortcode.
+            if self.at_sender_id and self.at_sender_id.strip():
+                payload["from"] = self.at_sender_id.strip()
+            else:
+                logger.info(f"SMS dispatch: 'from' omitted for {phone_number} (Using default AT shortcode instead).")
 
             url = f"{self.at_api_base}/version1/messaging"
 
@@ -364,6 +443,33 @@ class AthGadAlertService:
                             channel="sms", recipient=phone_number, message_type="alert",
                             message=message_body, subscription_status=subscription_status,
                             status="FAILED", error_detail=detail)
+                        # UserInBlacklist means the recipient replied STOP and
+                        # Africa's Talking has permanently blacklisted the number.
+                        # Auto-disable their SMS channel so we stop burning
+                        # dispatch attempts on a number that will never accept
+                        # messages again. Email alerts (if opted-in) still work.
+                        if status == "UserInBlacklist":
+                            try:
+                                engine = get_db_engine()
+                                with engine.begin() as conn:
+                                    conn.execute(text("""
+                                        UPDATE users
+                                        SET subscribe_sms = FALSE,
+                                            is_subscribed = CASE
+                                                WHEN subscribe_email = TRUE THEN TRUE
+                                                ELSE FALSE
+                                            END,
+                                            unsubscribed_at = NOW()
+                                        WHERE phone_number = :phone;
+                                    """), {"phone": phone_number})
+                                logger.warning(
+                                    "SMS channel auto-disabled for %s (%s) — "
+                                    "number blacklisted by Africa's Talking (STOP reply).",
+                                    name, phone_number)
+                            except Exception as db_err:
+                                logger.warning(
+                                    "Could not auto-disable SMS channel for %s: %s",
+                                    phone_number, db_err)
                         return False
                 else:
                     detail = f"AT response missing Recipients: {str(resp_json)[:200]}"
@@ -382,10 +488,10 @@ class AthGadAlertService:
                     phone=phone_number, name=name, message_type="alert",
                     tier="premium" if is_premium else "baseline", status="FAILED",
                     http_status=401, at_status="AUTH_FAILURE", error_detail=detail)
-                print(f"   ↪ The AT_API_KEY in config/.env does not match AT_USERNAME='{self.at_username}' for the {self.at_api_base} environment.")
-                print(f"   ↪ Fix: regenerate/update AT_API_KEY at https://account.africastalking.com/apps/sandbox/keys")
-                print(f"         (sandbox)  or https://account.africastalking.com/apps/prod/keys (production).")
-                print(f"   ↪ Sandbox mode requires AT_IS_SANDBOX=true and the SANDBOX key. Production needs the PRODUCTION key.")
+                logger.warning("The AT_API_KEY in config/.env does not match AT_USERNAME='%s' for the %s environment.", self.at_username, self.at_api_base)
+                logger.warning("Fix: regenerate/update AT_API_KEY at https://account.africastalking.com/apps/sandbox/keys")
+                logger.warning("      (sandbox)  or https://account.africastalking.com/apps/prod/keys (production).")
+                logger.warning("Sandbox mode requires AT_IS_SANDBOX=true and the SANDBOX key. Production needs the PRODUCTION key.")
                 self._record_dispatch(
                     channel="sms", recipient=phone_number, message_type="alert",
                     message=message_body, subscription_status=subscription_status,
@@ -459,29 +565,41 @@ class AthGadAlertService:
         cascading_list = risk_advisory.get("cascading_effects", []) or []
         proactive_list = risk_advisory.get("proactive_solutions", []) or []
 
+        # Escape every value interpolated into HTML below so a registered name,
+        # county or advisory line containing markup cannot inject HTML into the
+        # emails that other recipients (and this user) receive.
+        def _esc(value):
+            return html.escape(str(value or ""), quote=True)
+
+        safe_name = _esc(name)
+        safe_county = _esc(county)
+        safe_level = _esc(level)
+        safe_score = _esc(score)
+        safe_calamity = _esc(calamity)
+
         if is_premium:
-            subject = f"AthGad Alert: {level} Risk in {county} County"
+            subject = f"AthGad Alert: {safe_level} Risk in {safe_county} County"
             headline = "Important Safety Advisory"
-            description = f"Hello {name}, our monitoring system has detected rising risk in your area. Here is what you need to know and how to stay safe."
+            description = f"Hello {safe_name}, our monitoring system has detected rising risk in your area. Here is what you need to know and how to stay safe."
 
             metrics_html = f"""
                 <tr style="background-color: #020617;">
                     <td style="padding: 10px; font-weight: bold; color: #94a3b8;">County:</td>
-                    <td style="padding: 10px; font-weight: bold; color: #ffffff; text-align: right;">{county} County</td>
+                    <td style="padding: 10px; font-weight: bold; color: #ffffff; text-align: right;">{safe_county} County</td>
                 </tr>
                 <tr>
                     <td style="padding: 10px; color: #94a3b8;">Main Threat:</td>
-                    <td style="padding: 10px; color: #f1f5f9; text-align: right;">{calamity}</td>
+                    <td style="padding: 10px; color: #f1f5f9; text-align: right;">{safe_calamity}</td>
                 </tr>
                 <tr style="background-color: #020617;">
                     <td style="padding: 10px; color: #94a3b8;">Risk Level:</td>
-                    <td style="padding: 10px; font-weight: bold; color: #ef4444; text-align: right;">{score} ({level})</td>
+                    <td style="padding: 10px; font-weight: bold; color: #ef4444; text-align: right;">{safe_score} ({safe_level})</td>
                 </tr>
             """
 
             cascading_html = ""
             if cascading_list:
-                items = "".join(f"<li>{item}</li>" for item in cascading_list[:4])
+                items = "".join(f"<li>{_esc(item)}</li>" for item in cascading_list[:4])
                 cascading_html = f"""
                     <h4 style="color: #ffffff; margin-bottom: 8px; font-size: 13px; text-transform: uppercase;">Possible Impacts:</h4>
                     <ul style="font-size: 12px; color: #94a3b8; padding-left: 20px; line-height: 1.8; margin-top: 0;">
@@ -491,7 +609,7 @@ class AthGadAlertService:
 
             proactive_html = ""
             if proactive_list:
-                items = "".join(f"<li>{item}</li>" for item in proactive_list[:4])
+                items = "".join(f"<li>{_esc(item)}</li>" for item in proactive_list[:4])
                 proactive_html = f"""
                     <h4 style="color: #ffffff; margin-bottom: 8px; font-size: 13px; text-transform: uppercase;">What You Can Do:</h4>
                     <ul style="font-size: 12px; color: #94a3b8; padding-left: 20px; line-height: 1.8; margin-top: 0;">
@@ -507,18 +625,18 @@ class AthGadAlertService:
                 <a href="{self.base_url}/unsubscribe?email={quote(recipient_email, safe='')}" style="color: #ef4444; text-decoration: none;">Unsubscribe from Premium</a>
             """
         else:
-            subject = f"AthGad Baseline Advisory: Safety Anomaly detected in {county} County"
+            subject = f"AthGad Baseline Advisory: Safety Anomaly detected in {safe_county} County"
             headline = "Baseline Environmental Safety Warning"
-            description = f"Hello {name}, AthGad sensors have flagged an operational climate anomaly in {county} County reaching a <strong>{level.upper()}</strong> alert state."
+            description = f"Hello {safe_name}, AthGad sensors have flagged an operational climate anomaly in {safe_county} County reaching a <strong>{safe_level}</strong> alert state."
 
             metrics_html = f"""
                 <tr style="background-color: #020617;">
                     <td style="padding: 10px; font-weight: bold; color: #94a3b8;">Observation Target:</td>
-                    <td style="padding: 10px; font-weight: bold; color: #ffffff; text-align: right;">{county} County</td>
+                    <td style="padding: 10px; font-weight: bold; color: #ffffff; text-align: right;">{safe_county} County</td>
                 </tr>
                 <tr style="background-color: #020617;">
                     <td style="padding: 10px; color: #94a3b8;">Risk Evaluation Level:</td>
-                    <td style="padding: 10px; font-weight: bold; color: #eab308; text-align: right;">{level} Risk State</td>
+                    <td style="padding: 10px; font-weight: bold; color: #eab308; text-align: right;">{safe_level} Risk State</td>
                 </tr>
             """
 
@@ -575,7 +693,7 @@ class AthGadAlertService:
         """
 
         if not self.smtp_password:
-            print(f"Alert Engine Notice: SMTP key empty. Simulated email data block for {recipient_email}.")
+            logger.info("Alert Engine Notice: SMTP key empty. Simulated email data block for %s.", recipient_email)
             self._record_dispatch(
                 channel="email", recipient=recipient_email, message_type="alert",
                 message=subject, subscription_status="premium" if is_premium else "baseline",
@@ -596,14 +714,15 @@ class AthGadAlertService:
             server.sendmail(self.sender_email, recipient_email, msg.as_string())
             server.quit()
 
-            print(f"EMAIL SUCCESS: Telemetry layout dispatched to {recipient_email}. Tier: {'Premium' if is_premium else 'Free Baseline'}")
+            logger.info("EMAIL SUCCESS: Telemetry layout dispatched to %s. Tier: %s",
+                        recipient_email, "Premium" if is_premium else "Free Baseline")
             self._record_dispatch(
                 channel="email", recipient=recipient_email, message_type="alert",
                 message=subject, subscription_status="premium" if is_premium else "baseline",
                 status="SUCCESS")
             return True
         except Exception as e:
-            print(f"EMAIL ERROR: Failed to send to {recipient_email}: {e}")
+            logger.error("EMAIL ERROR: Failed to send to %s: %s", recipient_email, e)
             self._record_dispatch(
                 channel="email", recipient=recipient_email, message_type="alert",
                 message=subject, subscription_status="premium" if is_premium else "baseline",
@@ -636,8 +755,7 @@ class AthGadAlertService:
             msg = (
                 f"AthGad AI: Welcome back {name}! {detail_line} "
                 f"After that, a fee of 150 KES/month via M-PESA applies. "
-                f"Visit {self.base_url}/subscribe to manage your subscription. "
-                f"Reply STOP to opt out."
+                f"Visit {self.base_url}/subscribe to manage your subscription."
             )
             self._send_sms_raw(phone_number, msg, message_type="trial", name=name)
 
@@ -647,11 +765,12 @@ class AthGadAlertService:
                 if carried_over_days > 0
                 else "AthGad AI: Your Free Trial Has Started"
             )
+            safe_name = html.escape(str(name), quote=True)
             body_html = f"""
             <html>
             <body style="font-family: sans-serif; background-color: #020617; color: #f8fafc; padding: 20px;">
                 <div style="max-width: 500px; margin: 0 auto; background-color: #0f172a; border: 1px solid #1e293b; padding: 24px; border-radius: 12px;">
-                    <h2 style="color: #10b981;">{("Welcome Back to Premium, " if carried_over_days > 0 else "Welcome to AthGad Premium, ")}{name}!</h2>
+                    <h2 style="color: #10b981;">{("Welcome Back to Premium, " if carried_over_days > 0 else "Welcome to AthGad Premium, ")}{safe_name}!</h2>
                     <p style="color: #94a3b8;">{detail_line}</p>
                     <p style="color: #eab308;">After the trial, a fee of <strong>150 KES/month</strong> via M-PESA will apply to continue receiving premium alerts.</p>
                     <p style="color: #94a3b8;">Manage your subscription at <a href="{self.base_url}/subscribe" style="color: #38bdf8;">AthGad.ai/subscribe</a>.</p>
@@ -668,18 +787,18 @@ class AthGadAlertService:
             msg = (
                 f"AthGad AI: Hello {name}, your 30-day free trial has ended. "
                 f"You have been unsubscribed from premium alerts. "
-                f"Visit AthGad.ai/subscribe to re-subscribe and pay 150 KES/month via M-PESA. "
-                f"Reply STOP to opt out."
+                f"Visit AthGad.ai/subscribe to re-subscribe and pay 150 KES/month via M-PESA."
             )
             self._send_sms_raw(phone_number, msg, message_type="trial_expired", name=name)
 
         if opt_email and email:
             subject = "AthGad AI: Your Free Trial Has Ended"
+            safe_name = html.escape(str(name), quote=True)
             body_html = f"""
             <html>
             <body style="font-family: sans-serif; background-color: #020617; color: #f8fafc; padding: 20px;">
                 <div style="max-width: 500px; margin: 0 auto; background-color: #0f172a; border: 1px solid #1e293b; padding: 24px; border-radius: 12px;">
-                    <h2 style="color: #ef4444;">Trial Period Ended, {name}</h2>
+                    <h2 style="color: #ef4444;">Trial Period Ended, {safe_name}</h2>
                     <p style="color: #94a3b8;">Your 30-day free trial has concluded and you have been unsubscribed from premium alerts.</p>
                     <p style="color: #eab308;">To continue receiving full premium alerts, please re-subscribe and pay <strong>150 KES/month</strong> via M-PESA.</p>
                     <p style="color: #94a3b8;"><a href="{self.base_url}/subscribe" style="color: #38bdf8;">Click here to re-subscribe</a></p>
@@ -692,23 +811,24 @@ class AthGadAlertService:
     def send_payment_thank_you(self, name: str, phone_number: str, email: str,
                                opt_sms: bool = False, opt_email: bool = False):
         """Sends a thank-you message after successful M-PESA payment with next payment date."""
-        next_payment = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+        next_payment = (utc_now() + timedelta(days=30)).strftime("%Y-%m-%d")
         if opt_sms and phone_number:
             msg = (
                 f"AthGad AI: Thank you {name} for your payment of 150 KES! "
                 f"Your premium subscription is now active. "
                 f"Your next payment of 150 KES will be due on {next_payment}. "
-                f"Reply STOP to opt out."
+                f"Manage your alerts at {self.base_url}/dashboard."
             )
             self._send_sms_raw(phone_number, msg, message_type="payment", name=name)
 
         if opt_email and email:
             subject = "AthGad AI: Payment Successful - Thank You!"
+            safe_name = html.escape(str(name), quote=True)
             body_html = f"""
             <html>
             <body style="font-family: sans-serif; background-color: #020617; color: #f8fafc; padding: 20px;">
                 <div style="max-width: 500px; margin: 0 auto; background-color: #0f172a; border: 1px solid #1e293b; padding: 24px; border-radius: 12px;">
-                    <h2 style="color: #10b981;">Payment Successful, {name}!</h2>
+                    <h2 style="color: #10b981;">Payment Successful, {safe_name}!</h2>
                     <p style="color: #94a3b8;">Thank you for your payment of <strong>150 KES</strong>.</p>
                     <p style="color: #94a3b8;">Your premium subscription is now active.</p>
                     <p style="color: #eab308;">Your next payment of <strong>150 KES</strong> will be due on <strong>{next_payment}</strong>.</p>
@@ -734,20 +854,18 @@ class AthGadAlertService:
         if channel == "sms" and opt_sms and phone_number:
             msg = (
                 f"AthGad AI: Hello {name}, you have been unsubscribed from SMS alerts. "
-                f"We're sorry to see you go. If you're willing, please tell us why: "
-                f"Reply 1 for 'Too many messages', 2 for 'Not useful', 3 for 'Too expensive', "
-                f"or type your own reason. We value your feedback! "
                 f"{rejoin_encouragement} Visit {self.base_url}/subscribe to come back."
             )
             self._send_sms_raw(phone_number, msg, message_type="unsubscribe", name=name)
 
         if channel == "email" and opt_email and email:
             subject = "AthGad AI: You Have Been Unsubscribed"
+            safe_name = html.escape(str(name), quote=True)
             body_html = f"""
             <html>
             <body style="font-family: sans-serif; background-color: #020617; color: #f8fafc; padding: 20px;">
                 <div style="max-width: 500px; margin: 0 auto; background-color: #0f172a; border: 1px solid #1e293b; padding: 24px; border-radius: 12px;">
-                    <h2 style="color: #ef4444;">Unsubscribe Confirmed, {name}</h2>
+                    <h2 style="color: #ef4444;">Unsubscribe Confirmed, {safe_name}</h2>
                     <p style="color: #94a3b8;">You have been unsubscribed from email alerts.</p>
                     <p style="color: #94a3b8;">We're sorry to see you go. If you're willing, please tell us why by visiting the link below:</p>
                     <p style="text-align: center;">
@@ -803,8 +921,8 @@ class AthGadAlertService:
                 "to": phone_number,
                 "message": message_body
             }
-            if self.at_sender_id:
-                payload["from"] = self.at_sender_id
+            if self.at_sender_id and self.at_sender_id.strip():
+                payload["from"] = self.at_sender_id.strip()
 
             url = f"{self.at_api_base}/version1/messaging"
             session = requests.Session()
@@ -844,6 +962,31 @@ class AthGadAlertService:
                             channel="sms", recipient=phone_number, message_type=message_type,
                             message=message_body, subscription_status="none",
                             status="FAILED", error_detail=detail)
+                        # UserInBlacklist means the recipient replied STOP —
+                        # auto-disable their SMS channel so we stop attempting
+                        # sends to a permanently blacklisted number.
+                        if at_status == "UserInBlacklist":
+                            try:
+                                engine = get_db_engine()
+                                with engine.begin() as conn:
+                                    conn.execute(text("""
+                                        UPDATE users
+                                        SET subscribe_sms = FALSE,
+                                            is_subscribed = CASE
+                                                WHEN subscribe_email = TRUE THEN TRUE
+                                                ELSE FALSE
+                                            END,
+                                            unsubscribed_at = NOW()
+                                        WHERE phone_number = :phone;
+                                    """), {"phone": phone_number})
+                                logger.warning(
+                                    "SMS channel auto-disabled for %s (%s) — "
+                                    "number blacklisted by Africa's Talking (STOP reply).",
+                                    name, phone_number)
+                            except Exception as db_err:
+                                logger.warning(
+                                    "Could not auto-disable SMS channel for %s: %s",
+                                    phone_number, db_err)
                         return False
                 else:
                     detail = f"AT response missing Recipients: {str(resp_json)[:200]}"
@@ -886,11 +1029,11 @@ class AthGadAlertService:
         persists it to sms_delivery_logs so SMS successes/failures can be
         debugged from the admin workspace. Never raises - reporting must not
         break the send flow."""
-        print(
-            f"📱 [SMS DELIVERY] status={status} phone={phone} name={name!r} "
-            f"type={message_type} tier={tier} http={http_status} "
-            f"at_status={at_status!r} cost={cost} msg_id={message_id} "
-            f"error={error_detail}"
+        logger.info(
+            "SMS DELIVERY status=%s phone=%s name=%r type=%s tier=%s "
+            "http=%s at_status=%r cost=%s msg_id=%s error=%s",
+            status, phone, name, message_type, tier, http_status,
+            at_status, cost, message_id, error_detail,
         )
         try:
             engine = get_db_engine()
@@ -907,12 +1050,12 @@ class AthGadAlertService:
                     "mid": (message_id or "")[:60], "e": (error_detail or "")[:500],
                 })
         except Exception as log_err:
-            print(f"⚠️ [SMS DELIVERY] could not persist report row: {log_err}")
+            logger.warning("[SMS DELIVERY] could not persist report row: %s", log_err)
 
     def _send_email_raw(self, recipient_email: str, subject: str, body_html: str):
         """Sends a raw email without tier logic (for notifications)."""
         if not self.smtp_password:
-            print(f"📧 [EMAIL RAW SIMULATION] To: {recipient_email} -> {subject}")
+            logger.info("[EMAIL RAW SIMULATION] To: %s -> %s", recipient_email, subject)
             self._record_dispatch(
                 channel="email", recipient=recipient_email, message_type="notification",
                 message=subject, subscription_status="none",
@@ -932,14 +1075,14 @@ class AthGadAlertService:
             server.login(self.sender_email, self.smtp_password)
             server.sendmail(self.sender_email, recipient_email, msg.as_string())
             server.quit()
-            print(f"✅ Email raw sent to {recipient_email}: {subject}")
+            logger.info("Email raw sent to %s: %s", recipient_email, subject)
             self._record_dispatch(
                 channel="email", recipient=recipient_email, message_type="notification",
                 message=subject, subscription_status="none",
                 status="SUCCESS")
             return True
         except Exception as e:
-            print(f"❌ Email raw send error: {e}")
+            logger.error("Email raw send error: %s", e)
             self._record_dispatch(
                 channel="email", recipient=recipient_email, message_type="notification",
                 message=subject, subscription_status="none",
@@ -954,10 +1097,9 @@ class AthGadAlertService:
         that was sent, and the recipient's subscription status at dispatch time.
         Never raises - reporting must not break the send flow.
         """
-        print(
-            f"📨 [DISPATCH LOG] channel={channel} recipient={recipient} "
-            f"type={message_type} sub={subscription_status} status={status} "
-            f"error={error_detail}"
+        logger.info(
+            "DISPATCH LOG channel=%s recipient=%s type=%s sub=%s status=%s error=%s",
+            channel, recipient, message_type, subscription_status, status, error_detail,
         )
         try:
             engine = get_db_engine()
@@ -978,4 +1120,4 @@ class AthGadAlertService:
                     "e": (error_detail or "")[:500],
                 })
         except Exception as log_err:
-            print(f"⚠️ [DISPATCH LOG] could not persist dispatch row: {log_err}")
+            logger.warning("[DISPATCH LOG] could not persist dispatch row: %s", log_err)
