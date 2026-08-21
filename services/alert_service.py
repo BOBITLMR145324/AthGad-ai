@@ -125,7 +125,7 @@ class AthGadAlertService:
         return urllib3.PoolManager(
             ssl_context=ctx,
             retries=retries,
-            timeout=urllib3.Timeout(connect=10, read=30),
+            timeout=urllib3.Timeout(connect=30, read=60),
             headers={"User-Agent": "AthGadAI/1.0"},
         )
 
@@ -501,7 +501,7 @@ class AthGadAlertService:
                 headers=headers,
                 fields=payload,
                 encode_multipart=False,  # <-- CRITICAL FIX: sends as x-www-form-urlencoded
-                timeout=urllib3.Timeout(connect=10, read=30),
+                timeout=urllib3.Timeout(connect=30, read=60),
             )
 
             if response.status in [200, 201]:
@@ -1068,7 +1068,7 @@ class AthGadAlertService:
                 headers=headers,
                 fields=payload,
                 encode_multipart=False,  # <-- CRITICAL FIX: sends as x-www-form-urlencoded
-                timeout=urllib3.Timeout(connect=10, read=30),
+                timeout=urllib3.Timeout(connect=30, read=60),
             )
 
             if response.status in [200, 201]:
