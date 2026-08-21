@@ -392,6 +392,11 @@ def _compute_live_county_risk(county):
     """
     try:
         live_data = analytics_engine.calculate_composite_risk(county)
+        # FIX: Queue the alert broadcast on every risk recompute path.
+        # The dispatch dedup gate (6-hour cooldown) inside dispatch_critical_notification
+        # suppresses duplicates so this is safe to call from telemetry refresh,
+        # landing page, and admin analytics alike.
+        _dispatch_for_risk_data(county, live_data)
         raw_score = float(live_data.get("composite_risk_score", 0.3))
         score_pct = round(raw_score * 100, 1) if raw_score <= 1.0 else round(raw_score, 1)
         risk_level = live_data.get("risk_level", "Low")
@@ -820,6 +825,46 @@ def handle_logout():
 
 
 # =====================================================================
+# ALERT DISPATCH HELPER
+# =====================================================================
+
+def _queue_alert_dispatch(county: str, risk_data: dict):
+    """
+    Queues a tiered SMS/email alert broadcast for a county+risk payload.
+    Runs on the background notification worker thread. The dedup gate inside
+    `dispatch_critical_notification` (6-hour cooldown) prevents repeat
+    dispatches when many pages/endpoints compute the same county+level.
+    """
+    try:
+        engine = get_db_engine()
+        notification_queue.enqueue(
+            alert_service.dispatch_critical_notification,
+            county,
+            dict(risk_data),
+            engine,
+        )
+    except Exception as e:
+        logger.warning("Alert dispatch queue warning (%s): %s", county, e)
+
+
+def _dispatch_for_risk_data(county: str, risk_data: dict):
+    """
+    Enriches a risk payload with the county/calamity/advisory context and
+    queues the alert dispatch. Called from every risk-computation path
+    (risk-status, telemetry refresh, ingestion runner) so real Medium/High
+    alerts are always broadcast — not only when a logged-in user happens to
+    poll /api/v1/risk-status.
+    """
+    current_severity = risk_data.get("risk_level", "Medium")
+    live_calamity = calamity_for(county, current_severity)
+    risk_data["county"] = county
+    risk_data["calamity_type"] = live_calamity
+    risk_data["advisory"] = get_county_advisory(county, live_calamity)
+    _queue_alert_dispatch(county, risk_data)
+    return risk_data
+
+
+# =====================================================================
 # ROUTES: API (Protected)
 # =====================================================================
 
@@ -827,27 +872,15 @@ def handle_logout():
 def get_realtime_risk_status():
     """
     Get real-time risk status for a specific county.
-    Public endpoint but requires active session for alerts.
+    Public endpoint; alert dispatch is queued for Medium/High risk regardless
+    of whether the caller is authenticated (the dispatch dedup gate prevents
+    duplicate broadcasts across repeated polls).
     """
     target_county = request.args.get('county', default='Kitui')
     
     try:
         risk_data = analytics_engine.calculate_composite_risk(target_county)
-        current_severity = risk_data.get("risk_level", "Medium")
-        live_calamity = calamity_for(target_county, current_severity)
-        risk_data["county"] = target_county
-        risk_data["calamity_type"] = live_calamity
-        risk_data["advisory"] = get_county_advisory(target_county, live_calamity)
-        
-        # Queue alert dispatch if user is authenticated
-        if 'user_email' in session:
-            _dispatch_engine = get_db_engine()
-            notification_queue.enqueue(
-                alert_service.dispatch_critical_notification,
-                target_county,
-                dict(risk_data),
-                _dispatch_engine,
-            )
+        risk_data = _dispatch_for_risk_data(target_county, risk_data)
         
         score_val = risk_data.get("composite_risk_score", 0.0)
         if isinstance(score_val, (int, float)) and score_val <= 1.0:
@@ -954,7 +987,8 @@ def _load_profile(email):
     with engine.connect() as connection:
         row = connection.execute(text("""
             SELECT user_code, full_name, email, phone_number, county, role,
-                   is_subscribed, payment_status, registered_at, trial_ends_at
+                   is_subscribed, payment_status, registered_at, trial_ends_at,
+                   subscribe_sms, subscribe_email, dispatch_preference
             FROM users
             WHERE email = :email;
         """), {"email": email}).fetchone()
@@ -973,6 +1007,9 @@ def _load_profile(email):
         "payment_status": row.payment_status,
         "registered_at": row.registered_at,
         "trial_ends_at": row.trial_ends_at,
+        "subscribe_sms": bool(row.subscribe_sms),
+        "subscribe_email": bool(row.subscribe_email),
+        "dispatch_preference": row.dispatch_preference,
     }
 
 
@@ -1252,6 +1289,155 @@ def _perform_unsubscribe(email: str):
         return redirect(url_for('dashboard'))
 
 
+@app.route('/api/v1/sms/preferences', methods=['GET', 'POST'])
+@limiter.limit("20 per minute")
+def sms_preferences():
+    """
+    Dashboard SMS management endpoint.
+    GET: Returns the user's current SMS subscription status.
+    POST: Allows SMS users to:
+      - Subscribe to SMS alerts (enable SMS channel)
+      - Unsubscribe from SMS alerts (disable SMS channel)
+      - Opt out from receiving SMS entirely (disable SMS + set dispatch_preference)
+    """
+    if 'user_email' not in session:
+        return jsonify({"status": "error", "message": "Please sign in first."}), 401
+    
+    email = session['user_email']
+    engine = get_db_engine()
+    
+    # GET: Return current SMS preference status
+    if request.method == 'GET':
+        try:
+            with engine.connect() as connection:
+                user = connection.execute(
+                    text("SELECT subscribe_sms, subscribe_email, dispatch_preference "
+                         "FROM users WHERE email = :email"),
+                    {"email": email}
+                ).fetchone()
+            
+            if not user:
+                return jsonify({"status": "error", "message": "Account not found."}), 404
+            
+            return jsonify({
+                "status": "ok",
+                "subscribe_sms": bool(user.subscribe_sms),
+                "subscribe_email": bool(user.subscribe_email),
+                "dispatch_preference": user.dispatch_preference,
+            }), 200
+        except Exception as e:
+            logger.error("SMS preferences GET error: %s", e)
+            return jsonify({"status": "error", "message": "Could not load SMS preferences."}), 500
+    
+    # POST: Handle subscribe/unsubscribe/optout actions
+    action = (request.form.get('action') or '').strip().lower()
+    
+    if action not in ('subscribe', 'unsubscribe', 'optout'):
+        return jsonify({"status": "error", "message": "Invalid action."}), 400
+    
+    try:
+        with engine.connect() as connection:
+            user = connection.execute(
+                text("SELECT full_name, phone_number, subscribe_sms, subscribe_email, "
+                     "dispatch_preference FROM users WHERE email = :email"),
+                {"email": email}
+            ).fetchone()
+        
+        if not user:
+            return jsonify({"status": "error", "message": "Account not found."}), 404
+        
+        with engine.begin() as conn:
+            if action == 'subscribe':
+                # Enable SMS channel
+                conn.execute(text("""
+                    UPDATE users
+                    SET subscribe_sms = TRUE,
+                        is_subscribed = TRUE,
+                        dispatch_preference = 'sms',
+                        unsubscribed_at = NULL
+                    WHERE email = :email;
+                """), {"email": email})
+                logger.info("SMS subscribed for %s", email)
+                audit("sms_preferences", actor=email, outcome="subscribe")
+                
+                # Send confirmation SMS
+                try:
+                    alert_service.send_sms_subscribe_confirmation(
+                        name=user.full_name,
+                        phone_number=user.phone_number
+                    )
+                except Exception as notify_err:
+                    logger.warning("SMS subscribe confirmation warning: %s", notify_err)
+                
+                return jsonify({"status": "ok", "message": "SMS alerts enabled."}), 200
+            
+            elif action == 'unsubscribe':
+                # Disable SMS channel only, keep email if enabled
+                conn.execute(text("""
+                    UPDATE users
+                    SET subscribe_sms = FALSE,
+                        is_subscribed = CASE
+                            WHEN subscribe_email = TRUE THEN TRUE
+                            ELSE FALSE
+                        END,
+                        unsubscribed_at = NOW()
+                    WHERE email = :email;
+                """), {"email": email})
+                logger.info("SMS unsubscribed for %s", email)
+                audit("sms_preferences", actor=email, outcome="unsubscribe")
+                
+                # Send an SMS confirmation (still uses the phone for the
+                # confirmation even though the SMS channel is now disabled).
+                try:
+                    alert_service.send_unsubscribe_confirmation(
+                        name=user.full_name,
+                        phone_number=user.phone_number,
+                        email="",
+                        channel="sms",
+                        opt_sms=True,
+                        opt_email=False,
+                    )
+                except Exception as notify_err:
+                    logger.warning("SMS unsubscribe confirmation warning: %s", notify_err)
+                
+                return jsonify({"status": "ok", "message": "SMS alerts disabled."}), 200
+            
+            elif action == 'optout':
+                # Opt out from receiving SMS entirely
+                conn.execute(text("""
+                    UPDATE users
+                    SET subscribe_sms = FALSE,
+                        dispatch_preference = 'email',
+                        is_subscribed = CASE
+                            WHEN subscribe_email = TRUE THEN TRUE
+                            ELSE FALSE
+                        END,
+                        unsubscribed_at = NOW()
+                    WHERE email = :email;
+                """), {"email": email})
+                logger.info("SMS opt-out for %s", email)
+                audit("sms_preferences", actor=email, outcome="optout")
+                
+                # Send an SMS confirmation of the opt-out.
+                try:
+                    alert_service.send_unsubscribe_confirmation(
+                        name=user.full_name,
+                        phone_number=user.phone_number,
+                        email="",
+                        channel="sms",
+                        opt_sms=True,
+                        opt_email=False,
+                    )
+                except Exception as notify_err:
+                    logger.warning("SMS opt-out confirmation warning: %s", notify_err)
+                
+                return jsonify({"status": "ok", "message": "You have opted out from SMS alerts."}), 200
+        
+    except Exception as e:
+        logger.error("SMS preferences error: %s", e)
+        return jsonify({"status": "error", "message": "Could not update SMS preferences."}), 500
+
+
 @app.route('/unsubscribe/reason', methods=['GET', 'POST'])
 def unsubscribe_reason():
     """Capture unsubscribe reason."""
@@ -1327,7 +1513,14 @@ def _generate_unsub_ref(connection, full_name):
 def incoming_sms_callback():
     """
     Africa's Talking SMS gateway callback.
-    Handles incoming SMS messages (STOP replies are handled by AT directly).
+    Handles incoming SMS messages:
+      - "STOP" / "STOP ALL" / "UNSUBSCRIBE" / "CANCEL" → auto-disable the SMS
+        channel for the sender's account (in addition to AT's own blacklist).
+      - "1" / "2" / "3" → record the user's unsubscribe reason so the admin
+        reports show why the user left.
+    Any other incoming text is logged but NOT treated as an unsubscribe or a
+    reason submission (previously every multi-character message was incorrectly
+    recorded as an unsubscribe feedback row).
     """
     from_number = request.form.get("from", "").strip()
     text_content = request.form.get("text", "").strip().upper()
@@ -1352,36 +1545,57 @@ def incoming_sms_callback():
     search_query = f"%{norm_number}"
     reason_map = {
         "1": "Too many messages",
-        "2": "Not useful", 
-        "3": "Too expensive"
+        "2": "Not useful",
+        "3": "Too expensive",
     }
+    stop_commands = {"STOP", "STOPALL", "STOP ALL", "END", "CANCEL", "UNSUBSCRIBE", "QUIT"}
     
-    if text_content in reason_map or len(text_content) > 1:
-        suggested_answer = reason_map.get(text_content, "")
-        reason_text = reason_map.get(text_content, text_content)
-        try:
-            with engine.begin() as connection:
-                user = connection.execute(
-                    text("SELECT email FROM users WHERE phone_number LIKE :phone_pattern"),
-                    {"phone_pattern": search_query}
-                ).fetchone()
-                if user:
-                    user_row = connection.execute(
-                        text("SELECT full_name FROM users WHERE email = :email"),
-                        {"email": user.email}
-                    ).fetchone()
-                    unsub_ref = _generate_unsub_ref(connection, user_row.full_name)
-                    connection.execute(text("""
-                        INSERT INTO unsubscriptions (unsub_ref, channel, reason, email)
-                        VALUES (:unsub_ref, 'sms', :reason, :email)
-                    """), {
-                        "unsub_ref": unsub_ref,
-                        "reason": reason_text,
-                        "email": user.email,
-                    })
-                    logger.info("Unsubscribe reason (SMS reply) from %s: %s", from_number, reason_text)
-        except Exception as e:
-            logger.error("SMS reason recording error: %s", e)
+    # Only handle recognised unsubscribe commands and optional reason codes.
+    if text_content not in stop_commands and text_content not in reason_map:
+        logger.info("SMS callback ignored non-unsubscribe text from %s: %r", from_number, text_content)
+        return jsonify({"status": "received"}), 200
+    
+    try:
+        with engine.begin() as connection:
+            user = connection.execute(
+                text("SELECT email, full_name FROM users WHERE phone_number LIKE :phone_pattern"),
+                {"phone_pattern": search_query}
+            ).fetchone()
+            if not user:
+                logger.info("SMS callback: no user found for %s", from_number)
+                return jsonify({"status": "received"}), 200
+            
+            if text_content in stop_commands:
+                # Auto-disable SMS channel (mirror of the UserInBlacklist path).
+                connection.execute(text("""
+                    UPDATE users
+                    SET subscribe_sms = FALSE,
+                        is_subscribed = CASE
+                            WHEN subscribe_email = TRUE THEN TRUE
+                            ELSE FALSE
+                        END,
+                        unsubscribed_at = NOW()
+                    WHERE phone_number LIKE :phone_pattern;
+                """), {"phone_pattern": search_query})
+                logger.warning(
+                    "SMS callback: STOP received from %s (%s) — SMS channel disabled.",
+                    from_number, user.email,
+                )
+            
+            if text_content in reason_map:
+                reason_text = reason_map[text_content]
+                unsub_ref = _generate_unsub_ref(connection, user.full_name)
+                connection.execute(text("""
+                    INSERT INTO unsubscriptions (unsub_ref, channel, reason, email)
+                    VALUES (:unsub_ref, 'sms', :reason, :email)
+                """), {
+                    "unsub_ref": unsub_ref,
+                    "reason": reason_text,
+                    "email": user.email,
+                })
+                logger.info("Unsubscribe reason (SMS reply) from %s: %s", from_number, reason_text)
+    except Exception as e:
+        logger.error("SMS callback processing error: %s", e)
     
     return jsonify({"status": "received"}), 200
 
@@ -1665,10 +1879,17 @@ def mpesa_callback():
                     SET status = 'success', completed_at = NOW(), mpesa_receipt = :receipt
                     WHERE checkout_id = :cid;
                 """), {"receipt": receipt, "cid": checkout_id})
+                # Restore the user's channel preferences on successful payment.
+                # The user's subscribe_sms/subscribe_email were saved when the
+                # STK push was initiated, so we restore them here to ensure the
+                # user receives alerts on their chosen channels after payment.
                 conn.execute(text("""
                     UPDATE users
                     SET payment_status = 'active',
-                        is_subscribed = True,
+                        is_subscribed = CASE
+                            WHEN subscribe_sms = TRUE OR subscribe_email = TRUE THEN TRUE
+                            ELSE FALSE
+                        END,
                         trial_ends_at = NULL
                     WHERE mpesa_checkout_id = :cid;
                 """), {"cid": checkout_id})
@@ -1754,6 +1975,17 @@ def check_trial_expiry():
             """)).fetchall()
         
         for user in expired_users:
+            # Send the expiry notice FIRST using the user's current channel
+            # preferences, BEFORE disabling them in the database. Otherwise
+            # the notice would never be sent because the channels are already off.
+            alert_service.send_trial_expired_notice(
+                name=user.full_name,
+                phone_number=user.phone_number,
+                email=user.email,
+                opt_sms=user.subscribe_sms,
+                opt_email=user.subscribe_email
+            )
+            
             with engine.begin() as conn:
                 conn.execute(text("""
                     UPDATE users
@@ -1766,14 +1998,6 @@ def check_trial_expiry():
             
             expired_count += 1
             logger.info("Trial expired for user %s", user.email)
-            
-            alert_service.send_trial_expired_notice(
-                name=user.full_name,
-                phone_number=user.phone_number,
-                email=user.email,
-                opt_sms=user.subscribe_sms,
-                opt_email=user.subscribe_email
-            )
         
         return jsonify({
             "status": "success",

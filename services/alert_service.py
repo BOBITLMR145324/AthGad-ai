@@ -1,17 +1,18 @@
 import os
 import html
+import ssl
 import smtplib
 import logging
-import requests
 import urllib3
 import base64
+import urllib.parse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from urllib.parse import quote
 from dotenv import load_dotenv
 from sqlalchemy import text
-from requests.adapters import HTTPAdapter, Retry
+from urllib3.util.retry import Retry as URLLib3Retry
 from core.db_helper import get_db_engine
 from core.id_codes import new_dispatch_code
 from core.time_utils import utc_now, parse_dt
@@ -48,7 +49,12 @@ class AthGadAlertService:
         if self.at_sender_id and self.at_sender_id.startswith('+'):
             self.at_sender_id = self.at_sender_id[1:]
 
-        self.at_is_sandbox = os.getenv("AT_IS_SANDBOX", "false").lower() == "true" or self.at_username == "sandbox"
+        # FIX: Auto-detect sandbox mode from the environment.
+        self.at_is_sandbox = (
+            os.getenv("AT_IS_SANDBOX", "").strip().lower() in ("1", "true", "yes", "on")
+            or self.at_username == "sandbox"
+        )
+        
         # Dynamically switch API base URL based on environment mode
         if self.at_is_sandbox:
             self.at_api_base = "https://api.sandbox.africastalking.com"
@@ -96,33 +102,59 @@ class AthGadAlertService:
         except (TypeError, ValueError):
             self.dispatch_cooldown_hours = 6
 
+    def _get_at_http_pool(self):
+        """
+        Creates a urllib3 PoolManager with a custom SSL context.
+
+        FIX: urllib3 2.7.0 has a bug on Python 3.14 where the default SSL
+        context fails with 'SSL: WRONG_VERSION_NUMBER'. Passing an explicit
+        ssl.create_default_context() works around this. We use urllib3
+        directly instead of requests because requests cannot propagate a
+        custom SSL context through its HTTPAdapter on this Python version.
+        """
+        ctx = ssl.create_default_context()
+        if not self.ssl_verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        retries = URLLib3Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["POST"],
+        )
+        return urllib3.PoolManager(
+            ssl_context=ctx,
+            retries=retries,
+            timeout=urllib3.Timeout(connect=10, read=30),
+            headers={"User-Agent": "AthGadAI/1.0"},
+        )
+
     # ------------------------------------------------------------------
     # TIERED RISK ALERT DISPATCH
     # ------------------------------------------------------------------
-    def dispatch_critical_notification(self, county: str, risk_payload: dict, engine=None):
+    def dispatch_critical_notification(self, county: str, risk_data: dict, engine=None):
         """
-        Evaluates regional anomalies and dispatches alerts to ALL users.
-        Validates user trial periods and payment statuses against PostgreSQL.
-        Channels are evaluated independently: a channel receives Premium details
-        ONLY if the user has an active subscription or trial AND that channel is enabled.
-        Otherwise, it falls back to the limited baseline alert.
+        Evaluates regional anomalies and dispatches alerts to matching users.
 
-        `engine` is passed explicitly per call to avoid sharing a mutable engine
-        attribute across concurrent request threads. Falls back to self.engine
-        when not provided.
+        The dedup cooldown suppresses delivery ONLY for users who already
+        received a successful alert for this county+level during the cooldown.
+        A NEW subscriber (who has no successful alert_dispatch_log row for this
+        county) is always delivered so a newly-subscribed user immediately gets
+        the alert even if a prior broadcast happened minutes ago.
+        A broadcast that finds NO subscribers un-claims the cooldown so a stale
+        marked row never locks out a user who registers moments later.
         """
         if engine is None:
             engine = self.engine
         if engine is None:
-            logger.error("Alert Engine Error: Database engine context missing. Cannot verify subscribers.")
+            logger.error("Alert Engine Error: Database engine missing. Cannot verify subscribers.")
             return False
 
-        score = risk_payload.get("composite_risk_score", "0.0%")
-        level = risk_payload.get("risk_level", "Low")
-        metrics = risk_payload.get("metrics", {})
-        calamity = risk_payload.get("calamity_type", "Weather Anomaly")
-        # Extract advisory blueprint for tiered content
-        advisory = risk_payload.get("advisory", {})
+        score = risk_data.get("composite_risk_score", "0.0%")
+        level = risk_data.get("risk_level", "Low")
+        metrics = risk_data.get("metrics", {})
+        calamity = risk_data.get("calamity_type", "Weather Anomaly")
+        advisory = risk_data.get("advisory", {})
         risk_advisory = {
             "cascading_effects": advisory.get("cascading_effects", []) if isinstance(advisory, dict) else [],
             "proactive_solutions": advisory.get("proactive_solutions", []) if isinstance(advisory, dict) else []
@@ -130,26 +162,13 @@ class AthGadAlertService:
 
         logger.info("Alert Engine: evaluating risk vector for %s County...", county)
 
-        # System Threshold Rule: Only trigger alerts for abnormal operational states
         if level not in ["Medium", "High"]:
             logger.info("Alert Engine: Current Risk level (%s) is nominal. Dispatches suppressed.", level)
             return False
 
-        # Dedup gate: atomically claim dispatch rights for this county+level.
-        # Without this, every /api/v1/risk-status poll or dashboard refresh
-        # re-sends SMS/email alerts to all subscribers. A claimed (already
-        # dispatched) county+level inside the cooldown window is skipped.
-        if not self._claim_dispatch(engine, county, level):
-            logger.info("Alert Engine: Duplicate dispatch for %s (%s) suppressed "
-                        "within the %dh cooldown window.", county, level, self.dispatch_cooldown_hours)
-            return False
-
+        # Fetch subscribers FIRST so we can detect newly-registered / newly-
+        # subscribed users who have never received this county's alert.
         try:
-            # Fetch user vectors including payment status, trial expiration flags,
-            # and the county they are interested in (for per-county targeting).
-            # Users with a NULL/empty county still receive all alerts (backward
-            # compatible), while users with a county set only receive alerts for
-            # that specific county.
             with engine.connect() as connection:
                 rows = connection.execute(text("""
                     SELECT full_name, email, phone_number, is_subscribed,
@@ -159,100 +178,86 @@ class AthGadAlertService:
                     WHERE county IS NULL
                        OR LOWER(county) = LOWER(:county);
                 """), {"county": county}).fetchall()
-
-            # Per-county targeting is now done in SQL: users with no specific
-            # county (legacy behaviour) OR whose county matches the alert.
             subscribers = list(rows)
+        except Exception as e:
+            logger.error("Alert Engine: subscriber fetch failed (%s): %s", county, e)
+            return False
 
-            if not subscribers:
-                logger.info("Alert Engine Notice: No matching users found in database index for %s County.", county)
-                return True
-
-            logger.info("Alert Engine: Broadcasting verified channel-aware alerts for %d user profiles (target: %s County)...", len(subscribers), county)
-
-            now = utc_now()
-
-            for sub in subscribers:
-                # ----------------------------------------------------
-                # VERIFICATION CHECK: Verification & Tier Validation
-                # ----------------------------------------------------
-                payment_status = getattr(sub, 'payment_status', 'trialing')
-                trial_ends_at = getattr(sub, 'trial_ends_at', None)
-
-                # Check if trial is still active
-                is_trial_active = False
-                if trial_ends_at:
-                    trial_ends_at = parse_dt(trial_ends_at)
-                    if trial_ends_at and trial_ends_at > now:
-                        is_trial_active = True
-
-                # Global Premium Verification: True only for an active payment
-                # OR an active free trial. A bare registration (is_subscribed)
-                # without trial/payment stays on the free BASELINE tier so those
-                # users still receive the re-subscription encouragement.
-                account_is_premium = (payment_status == 'active') or is_trial_active
-
-                # Check individual channel opt-ins
-                opt_sms = getattr(sub, 'subscribe_sms', False) in [True, 1, 'True', '1']
-                opt_email = getattr(sub, 'subscribe_email', False) in [True, 1, 'True', '1']
-
-                # Channel Premium Status: True ONLY if verified account is premium AND channel is opted-in
-                sms_is_premium = account_is_premium and opt_sms
-                email_is_premium = account_is_premium and opt_email
-
-                # Unsubscribed members (all channels off) still receive the
-                # baseline safety alert so critical county warnings are never
-                # missed and they're encouraged to re-subscribe. The fallback
-                # channel uses their saved dispatch preference. This matches the
-                # promise on the unsubscribe pages: "Important safety warnings
-                # for your county will still be sent when needed."
-                if not opt_sms and not opt_email:
-                    pref = (getattr(sub, 'dispatch_preference', 'sms') or 'sms').strip().lower()
-                    if pref == 'email' and (getattr(sub, 'email', None) or '').strip():
-                        opt_email = True
-                    else:
-                        opt_sms = True
-
-                # Dispatch on opted-in channels; unsubscribed members get the
-                # baseline fallback channel selected above.
-                email_failover_sent = False
-                if opt_sms:
-                    # Channel 1: SMS Delivery Pipeline (Africa's Talking)
-                    sms_delivered = self._send_at_sms(
-                        sub.phone_number, sub.full_name, county, level, calamity,
-                        is_premium=sms_is_premium, risk_advisory=risk_advisory)
-
-                    # CHANNEL FAILOVER: If the SMS gateway rejected the message
-                    # (no credit, bad auth, unreachable), still deliver the alert
-                    # via the member's email so they are never left without a
-                    # warning. Content tier follows the account's premium status.
-                    if not sms_delivered and (getattr(sub, 'email', None) or '').strip():
-                        logger.warning("SMS delivery failed for %s; failing over to email %s", sub.full_name, sub.email)
-                        self._send_smtp_email(
-                            sub.email, sub.full_name, county, level, score, calamity, metrics,
-                            is_premium=account_is_premium, risk_advisory=risk_advisory)
-                        # Mark that email was already dispatched via failover so
-                        # the opt_email block below does NOT send a duplicate.
-                        email_failover_sent = True
-
-                if opt_email and not email_failover_sent:
-                    # Channel 2: EMAIL Delivery Pipeline
-                    email_delivered = self._send_smtp_email(
-                        sub.email, sub.full_name, county, level, score, calamity, metrics,
-                        is_premium=email_is_premium, risk_advisory=risk_advisory)
-
-                    # CHANNEL FAILOVER: If SMTP failed, try the member's phone.
-                    if not email_delivered and (getattr(sub, 'phone_number', None) or '').strip():
-                        logger.warning("Email delivery failed for %s; failing over to SMS %s", sub.full_name, sub.phone_number)
-                        self._send_at_sms(
-                            sub.phone_number, sub.full_name, county, level, calamity,
-                            is_premium=account_is_premium, risk_advisory=risk_advisory)
-
+        if not subscribers:
+            logger.info("Alert Engine Notice: No matching users for %s County.", county)
+            # Do NOT leave a claimed row: if nobody was subscribed, no alert was
+            # sent, so future registrants must be able to receive immediately.
+            self._unclaim_dispatch(engine, county, level)
             return True
 
-        except Exception as e:
-            logger.error("Alert Engine infrastructure processing failure: %s", e)
+        # Dedup gate. Only suppress for recipients who ALREADY received this alert.
+        if not self._claim_dispatch(engine, county, level):
+            # Figure out which subscribers have NEVER received a successful
+            # alert for this county+level during the cooldown. Deliver to those
+            # (newly subscribed users) now.
+            pending = []
+            for sub in subscribers:
+                if not self._has_received_alert(engine, sub, county, level):
+                    pending.append(sub)
+            if not pending:
+                logger.info("Alert Engine: Duplicate dispatch for %s (%s) suppressed "
+                            "- all subscribers already informed.", county, level)
+                return False
+            logger.info("Alert Engine: Cooldown suppresses existing subscribers, but "
+                        "%d NEW subscriber(s) for %s (%s) will receive the alert.",
+                        len(pending), county, level)
+            subscribers = pending
+
+        logger.info("Alert Engine: Broadcasting alerts for %d user profiles (target: %s County)...",
+                    len(subscribers), county)
+        now = utc_now()
+        any_delivered = False
+
+        for sub in subscribers:
+            payment_status = getattr(sub, 'payment_status', 'trialing')
+            trial_ends_at = getattr(sub, 'trial_ends_at', None)
+            is_trial_active = False
+            if trial_ends_at:
+                trial_ends_at = parse_dt(trial_ends_at)
+                if trial_ends_at and trial_ends_at > now:
+                    is_trial_active = True
+            account_is_premium = (payment_status == 'active') or is_trial_active
+
+            opt_sms = getattr(sub, 'subscribe_sms', False) in [True, 1, 'True', '1']
+            opt_email = getattr(sub, 'subscribe_email', False) in [True, 1, 'True', '1']
+            sms_is_premium = account_is_premium and opt_sms
+            email_is_premium = account_is_premium and opt_email
+
+            if not opt_sms and not opt_email:
+                pref = (getattr(sub, 'dispatch_preference', 'sms') or 'sms').strip().lower()
+                if pref == 'email' and (getattr(sub, 'email', None) or '').strip():
+                    opt_email = True
+                    email_is_premium = False
+                else:
+                    opt_sms = True
+                    sms_is_premium = False
+
+            if opt_sms:
+                sms_ok = self._send_at_sms(
+                    sub.phone_number, sub.full_name, county, level, calamity,
+                    is_premium=sms_is_premium, risk_advisory=risk_advisory)
+                if sms_ok:
+                    any_delivered = True
+
+            if opt_email:
+                email_ok = self._send_smtp_email(
+                    sub.email, sub.full_name, county, level, score, calamity, metrics,
+                    is_premium=email_is_premium, risk_advisory=risk_advisory)
+                if email_ok:
+                    any_delivered = True
+
+        if not any_delivered:
+            logger.warning("Alert Engine: No channel delivered for %s (%s) - "
+                           "un-claiming dispatch so a retry can happen.", county, level)
+            self._unclaim_dispatch(engine, county, level)
             return False
+
+        return True
 
     def _claim_dispatch(self, engine, county: str, level: str) -> bool:
         """
@@ -262,12 +267,44 @@ class AthGadAlertService:
         the same county+level was already dispatched within the cooldown window.
 
         The claim is atomic (a single UPDATE that flips dispatched = TRUE) so two
-        concurrent risk-status calls cannot both pass the gate. If no matching
-        recent row exists at all (e.g. the risk row failed to persist), dispatch
-        is allowed to proceed so real alerts are never silently dropped.
+        concurrent risk-status calls cannot both pass the gate.
+
+        FIX: The previous implementation only looked for rows with
+        `dispatched = FALSE`, but core/analytics.py inserts a NEW row with
+        `dispatched = FALSE` on EVERY risk computation — so the cooldown NEVER
+        suppressed duplicates. Now we first check whether ANY recent row for the
+        county+level has already been marked dispatched=TRUE within the cooldown
+        window. If so, we suppress this dispatch (and mark any straggler
+        undispatched rows so a later call also suppresses). Otherwise we atomically
+        claim the newest undispatched row so this is the one-and-only broadcast.
         """
         try:
             with engine.begin() as connection:
+                # Already dispatched recently for this county+level?
+                already_dispatched = connection.execute(text("""
+                    SELECT 1
+                    FROM risk_alerts
+                    WHERE county = :county
+                      AND risk_level = :level
+                      AND dispatched = TRUE
+                      AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                    LIMIT 1
+                """), {"county": county, "level": level, "hours": self.dispatch_cooldown_hours}).fetchone()
+
+                if already_dispatched is not None:
+                    # A dispatch already ran within the cooldown window → suppress.
+                    # Clean up any fresh undispatched rows so they don't re-arm.
+                    connection.execute(text("""
+                        UPDATE risk_alerts
+                        SET dispatched = TRUE
+                        WHERE county = :county
+                          AND risk_level = :level
+                          AND dispatched = FALSE
+                          AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                    """), {"county": county, "level": level, "hours": self.dispatch_cooldown_hours})
+                    return False
+
+                # No prior dispatched row in window → claim the newest undispatched one.
                 result = connection.execute(text("""
                     UPDATE risk_alerts
                     SET dispatched = TRUE
@@ -280,8 +317,9 @@ class AthGadAlertService:
                 if result.rowcount > 0:
                     return True
 
-                # Nothing was claimed. If a recent row exists, it is already
-                # dispatched -> suppress. If none exists, dispatch anyway.
+                # Nothing to claim. If NO recent row exists at all (e.g. data was
+                # pruned or never persisted), allow dispatch so real alerts are
+                # never silently dropped. Otherwise, a previous claim won the race.
                 recent = connection.execute(text("""
                     SELECT 1
                     FROM risk_alerts
@@ -295,6 +333,63 @@ class AthGadAlertService:
         except Exception as e:
             logger.warning("Alert Engine dedup warning (%s, %s): %s", county, level, e)
             return True
+
+    def _unclaim_dispatch(self, engine, county: str, level: str):
+        """
+        Resets the `dispatched` flag on recent risk-alert rows for a county+level
+        back to FALSE so a later risk-status poll / refresh can attempt the
+        broadcast again.
+
+        Called when a dispatch ran but NO channel delivered successfully
+        (e.g. every SMS recipient was blacklisted by Africa's Talking). A failed
+        delivery should consume the cooldown window; otherwise the user never
+        receives an alert until the 6-hour window expires.
+        """
+        try:
+            with engine.begin() as connection:
+                connection.execute(text("""
+                    UPDATE risk_alerts
+                    SET dispatched = FALSE
+                    WHERE county = :county
+                      AND risk_level = :level
+                      AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                """), {"county": county, "level": level, "hours": self.dispatch_cooldown_hours})
+        except Exception as e:
+            logger.warning("Alert Engine un-claim warning (%s, %s): %s", county, level, e)
+
+    def _has_received_alert(self, engine, sub, county: str, level: str) -> bool:
+        """
+        Returns True when `sub` has already received a SUCCESSFUL alert
+        dispatch for this county+risk-level within the cooldown window.
+        Used by dispatch_critical_notification so a newly-subscribed user who
+        has never been alerted is always delivered even when a prior broadcast
+        suppressed the cooldown.
+        """
+        try:
+            recipient = (getattr(sub, 'phone_number', None) or '').strip()
+            if not recipient:
+                recipient = (getattr(sub, 'email', None) or '').strip()
+            if not recipient:
+                return False
+            with engine.connect() as connection:
+                row = connection.execute(text("""
+                    SELECT 1
+                    FROM alert_dispatch_logs
+                    WHERE recipient = :recipient
+                      AND message_type = 'alert'
+                      AND status = 'SUCCESS'
+                      AND message_content LIKE :county_pat
+                      AND dispatched_at >= NOW() - (INTERVAL '1 hour' * :hours)
+                    LIMIT 1
+                """), {
+                    "recipient": recipient[:120],
+                    "county_pat": f"%{county}%",
+                    "hours": self.dispatch_cooldown_hours,
+                }).fetchone()
+                return row is not None
+        except Exception as e:
+            logger.warning("Alert Engine: received-alert check warning (%s): %s", getattr(sub, 'email', '?'), e)
+            return False
 
     # ------------------------------------------------------------------
     # SMS DISPATCH (tiered content)
@@ -392,29 +487,24 @@ class AthGadAlertService:
 
             url = f"{self.at_api_base}/version1/messaging"
 
-            session = requests.Session()
-            session.trust_env = False
-            retry_strategy = Retry(
-                total=3,
-                backoff_factor=1,
-                status_forcelist=[429, 500, 502, 503, 504],
-                allowed_methods=["POST"]
-            )
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-            session.mount("https://", adapter)
-            session.mount("http://", adapter)
-            headers["User-Agent"] = "AthGadAI/1.0"
-
-            response = session.post(
+            # FIX: Use urllib3 directly with a custom SSL context. urllib3 2.7.0
+            # has a bug on Python 3.14 where the default SSL context fails with
+            # 'SSL: WRONG_VERSION_NUMBER'. requests cannot propagate a custom
+            # SSL context through its HTTPAdapter on this Python version.
+            http = self._get_at_http_pool()
+            
+            # FIX: Use encode_multipart=False to send as x-www-form-urlencoded
+            # Africa's Talking API rejects multipart/form-data with boundary strings
+            response = http.request(
+                "POST",
                 url,
                 headers=headers,
-                data=payload,
-                timeout=30,
-                verify=self.ssl_verify,
-                proxies={"http": None, "https": None}
+                fields=payload,
+                encode_multipart=False,  # <-- CRITICAL FIX: sends as x-www-form-urlencoded
+                timeout=urllib3.Timeout(connect=10, read=30),
             )
 
-            if response.status_code in [200, 201]:
+            if response.status in [200, 201]:
                 resp_json = response.json()
                 recipients = resp_json.get('SMSMessageData', {}).get('Recipients', [])
                 tier = "premium" if is_premium else "baseline"
@@ -425,7 +515,7 @@ class AthGadAlertService:
                     if status == "Success":
                         self._log_sms_delivery(
                             phone=phone_number, name=name, message_type="alert",
-                            tier=tier, status="SUCCESS", http_status=response.status_code,
+                            tier=tier, status="SUCCESS", http_status=response.status,
                             at_status=status, cost=cost, message_id=msg_id)
                         self._record_dispatch(
                             channel="sms", recipient=phone_number, message_type="alert",
@@ -436,53 +526,33 @@ class AthGadAlertService:
                         detail = f"AT rejected with status '{status}'"
                         self._log_sms_delivery(
                             phone=phone_number, name=name, message_type="alert",
-                            tier=tier, status="FAILED", http_status=response.status_code,
+                            tier=tier, status="FAILED", http_status=response.status,
                             at_status=status, cost=cost, message_id=msg_id,
                             error_detail=detail)
                         self._record_dispatch(
                             channel="sms", recipient=phone_number, message_type="alert",
                             message=message_body, subscription_status=subscription_status,
                             status="FAILED", error_detail=detail)
-                        # UserInBlacklist means the recipient replied STOP and
-                        # Africa's Talking has permanently blacklisted the number.
-                        # Auto-disable their SMS channel so we stop burning
-                        # dispatch attempts on a number that will never accept
-                        # messages again. Email alerts (if opted-in) still work.
+                        
                         if status == "UserInBlacklist":
-                            try:
-                                engine = get_db_engine()
-                                with engine.begin() as conn:
-                                    conn.execute(text("""
-                                        UPDATE users
-                                        SET subscribe_sms = FALSE,
-                                            is_subscribed = CASE
-                                                WHEN subscribe_email = TRUE THEN TRUE
-                                                ELSE FALSE
-                                            END,
-                                            unsubscribed_at = NOW()
-                                        WHERE phone_number = :phone;
-                                    """), {"phone": phone_number})
-                                logger.warning(
-                                    "SMS channel auto-disabled for %s (%s) — "
-                                    "number blacklisted by Africa's Talking (STOP reply).",
-                                    name, phone_number)
-                            except Exception as db_err:
-                                logger.warning(
-                                    "Could not auto-disable SMS channel for %s: %s",
-                                    phone_number, db_err)
+                            logger.info(
+                                "SMS alert blacklisted by AT for %s (%s) — "
+                                "keeping SMS subscription active; delivery blocked by AT.",
+                                name, phone_number,
+                            )
                         return False
                 else:
                     detail = f"AT response missing Recipients: {str(resp_json)[:200]}"
                     self._log_sms_delivery(
                         phone=phone_number, name=name, message_type="alert",
-                        tier=tier, status="FAILED", http_status=response.status_code,
+                        tier=tier, status="FAILED", http_status=response.status,
                         at_status="NO_RECIPIENTS", error_detail=detail)
                     self._record_dispatch(
                         channel="sms", recipient=phone_number, message_type="alert",
                         message=message_body, subscription_status=subscription_status,
                         status="FAILED", error_detail=detail)
                     return False
-            elif response.status_code == 401:
+            elif response.status == 401:
                 detail = "invalid AT_API_KEY/AT_USERNAME (see fix guidance below)"
                 self._log_sms_delivery(
                     phone=phone_number, name=name, message_type="alert",
@@ -498,11 +568,11 @@ class AthGadAlertService:
                     status="FAILED", error_detail=detail)
                 return False
             else:
-                detail = response.text[:200]
+                detail = response.data.decode('utf-8', errors='replace')[:200]
                 self._log_sms_delivery(
                     phone=phone_number, name=name, message_type="alert",
                     tier="premium" if is_premium else "baseline", status="FAILED",
-                    http_status=response.status_code, at_status="HTTP_ERROR",
+                    http_status=response.status, at_status="HTTP_ERROR",
                     error_detail=detail)
                 self._record_dispatch(
                     channel="sms", recipient=phone_number, message_type="alert",
@@ -510,7 +580,7 @@ class AthGadAlertService:
                     status="FAILED", error_detail=detail)
                 return False
 
-        except requests.exceptions.SSLError as ssl_err:
+        except urllib3.exceptions.SSLError as ssl_err:
             detail = str(ssl_err)[:500]
             self._log_sms_delivery(
                 phone=phone_number, name=name, message_type="alert",
@@ -521,7 +591,7 @@ class AthGadAlertService:
                 message=message_body, subscription_status=subscription_status,
                 status="FAILED", error_detail=detail)
             return False
-        except requests.exceptions.ConnectionError as conn_err:
+        except urllib3.exceptions.MaxRetryError as conn_err:
             detail = str(conn_err)[:500]
             self._log_sms_delivery(
                 phone=phone_number, name=name, message_type="alert",
@@ -532,7 +602,7 @@ class AthGadAlertService:
                 message=message_body, subscription_status=subscription_status,
                 status="FAILED", error_detail=detail)
             return False
-        except requests.exceptions.Timeout as timeout_err:
+        except urllib3.exceptions.TimeoutError as timeout_err:
             detail = str(timeout_err)[:500]
             self._log_sms_delivery(
                 phone=phone_number, name=name, message_type="alert",
@@ -565,9 +635,6 @@ class AthGadAlertService:
         cascading_list = risk_advisory.get("cascading_effects", []) or []
         proactive_list = risk_advisory.get("proactive_solutions", []) or []
 
-        # Escape every value interpolated into HTML below so a registered name,
-        # county or advisory line containing markup cannot inject HTML into the
-        # emails that other recipients (and this user) receive.
         def _esc(value):
             return html.escape(str(value or ""), quote=True)
 
@@ -706,9 +773,47 @@ class AthGadAlertService:
             msg['From'] = self.sender_email
             msg['To'] = recipient_email
             msg['Subject'] = subject
+
+            # FIX: Include a plain-text alternative alongside the HTML so
+            # spam filters / content blockers / notification-previews display
+            # usable content. A pure HTML-only message is much more likely to
+            # land in Gmail's Spam/Promotions folder.
+            text_body = (
+                f"{headline}\n\n"
+                f"{html.unescape(description)}\n\n"
+                f"County: {safe_county} | Risk: {safe_level}\n"
+                f"Threat: {safe_calamity}\n\n"
+                f"Manage your alerts at {self.base_url}"
+            )
+            msg.attach(MIMEText(text_body, 'plain'))
             msg.attach(MIMEText(body_html, 'html'))
 
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            import socket
+            socket.setdefaulttimeout(15)
+
+            # Pre-resolve the SMTP host and log the IPs we resolve. This makes
+            # DNS failures obvious and actionable when the network blocks
+            # smtp.gmail.com (the #1 cause of getaddrinfo failed on home/office
+            # networks in Kenya and other countries).
+            try:
+                resolved = socket.getaddrinfo(self.smtp_server, self.smtp_port, socket.AF_INET, socket.SOCK_STREAM)
+                logger.info("EMAIL SMTP host '%s' resolved to: %s",
+                            self.smtp_server,
+                            sorted({addr[4][0] for addr in resolved}))
+            except socket.gaierror as dns_err:
+                logger.critical(
+                    "EMAIL DNS FAILURE: Cannot resolve SMTP host '%s' (getaddrinfo failed). "
+                    "This is a NETWORK/DNS issue, not an app bug. Options: "
+                    "(1) verify `nslookup smtp.gmail.com` works on this machine, "
+                    "(2) use a different SMTP relay host reachable from this network "
+                    "(e.g. Microsoft 365 smtp.office365.com:587, Zoho smtp.zoho.com:587), "
+                    "(3) set SMTP_SERVER to a direct IP if DNS is broken, "
+                    "(4) allow list smtp.gmail.com:587 on the outbound firewall.",
+                    self.smtp_server,
+                )
+                raise
+
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=15)
             server.starttls()
             server.login(self.sender_email, self.smtp_password)
             server.sendmail(self.sender_email, recipient_email, msg.as_string())
@@ -839,6 +944,17 @@ class AthGadAlertService:
             """
             self._send_email_raw(email, subject, body_html)
 
+    def send_sms_subscribe_confirmation(self, name: str, phone_number: str):
+        """Sends a confirmation SMS when a user subscribes to SMS alerts."""
+        if not phone_number:
+            return
+        msg = (
+            f"AthGad AI: Hello {name}, you are now subscribed to SMS alerts. "
+            f"You will receive urgent safety alerts for your county. "
+            f"Manage your alerts at {self.base_url}/dashboard."
+        )
+        self._send_sms_raw(phone_number, msg, message_type="subscribe", name=name)
+
     def send_unsubscribe_confirmation(self, name: str, phone_number: str, email: str, channel: str,
                                       opt_sms: bool = False, opt_email: bool = False):
         """
@@ -886,8 +1002,20 @@ class AthGadAlertService:
     # RAW SEND HELPERS (no tier logic)
     # ------------------------------------------------------------------
     def _send_sms_raw(self, phone_number: str, message_body: str,
-                      message_type: str = "notification", name: str = ""):
-        """Sends a raw SMS without tier logic (for notifications)."""
+                      message_type: str = "notification", name: str = "",
+                      auto_disable_on_blacklist: bool = False):
+        """
+        Sends a raw SMS without tier logic (for notifications).
+
+        `auto_disable_on_blacklist` defaults to False: a `UserInBlacklist`
+        response on a confirmation / trial / payment notification should NOT
+        disable the subscriber's SMS channel. (Previously the auto-disable was
+        unconditional, so a user clicking "Subscribe to SMS" would get their
+        `subscribe_sms` flag instantly flipped back to FALSE when the welcome
+        SMS failed with `UserInBlacklist` — making the dashboard appear broken.)
+        Only actual alert dispatches (`_send_at_sms`) pass True so a permanently
+        blacklisted recipient stops burning dispatch attempts.
+        """
         phone_number = phone_number.strip().replace(' ', '').replace('-', '')
         if phone_number.startswith('+254'):
             pass
@@ -925,16 +1053,25 @@ class AthGadAlertService:
                 payload["from"] = self.at_sender_id.strip()
 
             url = f"{self.at_api_base}/version1/messaging"
-            session = requests.Session()
-            session.trust_env = False
-            retry_strategy = Retry(total=2, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504], allowed_methods=["POST"])
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-            session.mount("https://", adapter)
-            session.mount("http://", adapter)
-            headers["User-Agent"] = "AthGadAI/1.0"
 
-            response = session.post(url, headers=headers, data=payload, timeout=15, verify=self.ssl_verify, proxies={"http": None, "https": None})
-            if response.status_code in [200, 201]:
+            # FIX: Use urllib3 directly with a custom SSL context. urllib3 2.7.0
+            # has a bug on Python 3.14 where the default SSL context fails with
+            # 'SSL: WRONG_VERSION_NUMBER'. requests cannot propagate a custom
+            # SSL context through its HTTPAdapter on this Python version.
+            http = self._get_at_http_pool()
+            
+            # FIX: Use encode_multipart=False to send as x-www-form-urlencoded
+            # Africa's Talking API rejects multipart/form-data with boundary strings
+            response = http.request(
+                "POST",
+                url,
+                headers=headers,
+                fields=payload,
+                encode_multipart=False,  # <-- CRITICAL FIX: sends as x-www-form-urlencoded
+                timeout=urllib3.Timeout(connect=10, read=30),
+            )
+
+            if response.status in [200, 201]:
                 resp_json = response.json()
                 recipients = resp_json.get('SMSMessageData', {}).get('Recipients', [])
                 if recipients:
@@ -943,7 +1080,7 @@ class AthGadAlertService:
                     if at_status == "Success":
                         self._log_sms_delivery(
                             phone=phone_number, name=name, message_type=message_type,
-                            tier="none", status="SUCCESS", http_status=response.status_code,
+                            tier="none", status="SUCCESS", http_status=response.status,
                             at_status=at_status, cost=r.get('cost', 'N/A'),
                             message_id=r.get('messageId', 'N/A'))
                         self._record_dispatch(
@@ -955,17 +1092,15 @@ class AthGadAlertService:
                         detail = f"AT rejected with status '{at_status}'"
                         self._log_sms_delivery(
                             phone=phone_number, name=name, message_type=message_type,
-                            tier="none", status="FAILED", http_status=response.status_code,
+                            tier="none", status="FAILED", http_status=response.status,
                             at_status=at_status, cost=r.get('cost', 'N/A'),
                             message_id=r.get('messageId', 'N/A'), error_detail=detail)
                         self._record_dispatch(
                             channel="sms", recipient=phone_number, message_type=message_type,
                             message=message_body, subscription_status="none",
                             status="FAILED", error_detail=detail)
-                        # UserInBlacklist means the recipient replied STOP —
-                        # auto-disable their SMS channel so we stop attempting
-                        # sends to a permanently blacklisted number.
-                        if at_status == "UserInBlacklist":
+                        
+                        if at_status == "UserInBlacklist" and auto_disable_on_blacklist:
                             try:
                                 engine = get_db_engine()
                                 with engine.begin() as conn:
@@ -987,12 +1122,18 @@ class AthGadAlertService:
                                 logger.warning(
                                     "Could not auto-disable SMS channel for %s: %s",
                                     phone_number, db_err)
+                        elif at_status == "UserInBlacklist":
+                            logger.info(
+                                "SMS blacklist notice (no auto-disable): %s (%s) "
+                                "is blacklisted by AT but this was a %s notification.",
+                                name, phone_number, message_type,
+                            )
                         return False
                 else:
                     detail = f"AT response missing Recipients: {str(resp_json)[:200]}"
                     self._log_sms_delivery(
                         phone=phone_number, name=name, message_type=message_type,
-                        tier="none", status="FAILED", http_status=response.status_code,
+                        tier="none", status="FAILED", http_status=response.status,
                         at_status="NO_RECIPIENTS", error_detail=detail)
                     self._record_dispatch(
                         channel="sms", recipient=phone_number, message_type=message_type,
@@ -1000,10 +1141,10 @@ class AthGadAlertService:
                         status="FAILED", error_detail=detail)
                     return False
             else:
-                detail = response.text[:200]
+                detail = response.data.decode('utf-8', errors='replace')[:200]
                 self._log_sms_delivery(
                     phone=phone_number, name=name, message_type=message_type,
-                    tier="none", status="FAILED", http_status=response.status_code,
+                    tier="none", status="FAILED", http_status=response.status,
                     at_status="HTTP_ERROR", error_detail=detail)
                 self._record_dispatch(
                     channel="sms", recipient=phone_number, message_type=message_type,

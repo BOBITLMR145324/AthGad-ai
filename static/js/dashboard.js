@@ -15,6 +15,8 @@ function escapeHtml(value) {
 document.addEventListener("DOMContentLoaded", function () {
   // Initial system load run
   triggerRiskEvaluationPipeline();
+  // Load the user's current SMS subscription status
+  loadSmsStatus();
 });
 
 function triggerRiskEvaluationPipeline() {
@@ -286,4 +288,158 @@ function loadStagedAlertHistory() {
         targetDOMElement.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-rose-400 text-xs">Something went wrong. Click refresh to try again.</td></tr>`;
       }
     });
+}
+
+// =====================================================================
+// SMS ALERT MANAGEMENT (Dashboard)
+// =====================================================================
+
+/**
+ * Manages SMS alert preferences from the dashboard.
+ * Actions: 'subscribe' | 'unsubscribe' | 'optout'
+ */
+async function manageSms(action) {
+  const badge = document.getElementById("sms-status-badge");
+  const buttons = [
+    document.getElementById("sms-subscribe-btn"),
+    document.getElementById("sms-unsubscribe-btn"),
+    document.getElementById("sms-optout-btn"),
+  ];
+
+  // Disable all buttons while processing
+  buttons.forEach((btn) => {
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add("opacity-50", "cursor-not-allowed");
+    }
+  });
+
+  try {
+    const formData = new FormData();
+    formData.append("action", action);
+
+    const response = await fetch("/api/v1/sms/preferences", {
+      method: "POST",
+      body: formData,
+      headers: {
+        "X-CSRFToken": getCsrfToken(),
+      },
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.status === "ok") {
+      // Update badge based on action
+      if (badge) {
+        if (action === "subscribe") {
+          badge.textContent = "SMS Active";
+          badge.className =
+            "px-3 py-1 rounded-full text-xs font-bold bg-emerald-600 text-white";
+        } else {
+          badge.textContent = "SMS Disabled";
+          badge.className =
+            "px-3 py-1 rounded-full text-xs font-bold bg-slate-700 text-slate-300";
+        }
+      }
+      // Show success message
+      showSmsMessage(data.message, "success");
+    } else {
+      showSmsMessage(
+        data.message || "Could not update SMS preferences.",
+        "error",
+      );
+    }
+  } catch (err) {
+    console.error("SMS preference error:", err);
+    showSmsMessage("Network error. Please try again.", "error");
+  } finally {
+    // Re-enable all buttons
+    buttons.forEach((btn) => {
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove("opacity-50", "cursor-not-allowed");
+      }
+    });
+  }
+}
+
+/**
+ * Loads and displays the user's current SMS subscription status.
+ * Called on page load so the SMS management panel badge reflects reality.
+ */
+async function loadSmsStatus() {
+  const badge = document.getElementById("sms-status-badge");
+  if (!badge) return;
+
+  try {
+    const response = await fetch("/api/v1/sms/preferences", {
+      method: "GET",
+      headers: {
+        "X-CSRFToken": getCsrfToken(),
+      },
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.status === "ok") {
+      if (data.subscribe_sms) {
+        badge.textContent = "SMS Active";
+        badge.className =
+          "px-3 py-1 rounded-full text-xs font-bold bg-emerald-600 text-white";
+      } else {
+        badge.textContent = "SMS Disabled";
+        badge.className =
+          "px-3 py-1 rounded-full text-xs font-bold bg-slate-700 text-slate-300";
+      }
+    } else {
+      badge.textContent = "SMS Status Unavailable";
+      badge.className =
+        "px-3 py-1 rounded-full text-xs font-bold bg-amber-900/60 text-amber-300";
+    }
+  } catch (err) {
+    console.error("Could not load SMS status:", err);
+    if (badge) {
+      badge.textContent = "SMS Status Unavailable";
+      badge.className =
+        "px-3 py-1 rounded-full text-xs font-bold bg-amber-900/60 text-amber-300";
+    }
+  }
+}
+
+/**
+ * Displays a temporary status message near the SMS panel.
+ */
+function showSmsMessage(message, type) {
+  const panel = document.getElementById("sms-management-panel");
+  if (!panel) return;
+
+  // Remove any existing message
+  const existing = document.getElementById("sms-feedback");
+  if (existing) existing.remove();
+
+  const msg = document.createElement("div");
+  msg.id = "sms-feedback";
+  msg.className =
+    "mt-3 p-3 rounded-lg text-xs font-semibold border " +
+    (type === "success"
+      ? "bg-emerald-950/60 border-emerald-800 text-emerald-300"
+      : "bg-rose-950/60 border-rose-800 text-rose-300");
+  msg.textContent = message;
+  panel.appendChild(msg);
+
+  // Auto-dismiss after 4 seconds
+  setTimeout(() => {
+    if (msg.parentNode) msg.remove();
+  }, 4000);
+}
+
+/**
+ * Extracts the CSRF token from the page's meta tag or hidden input.
+ */
+function getCsrfToken() {
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  if (meta) return meta.getAttribute("content");
+  const input = document.querySelector('input[name="csrf_token"]');
+  if (input) return input.value;
+  return "";
 }

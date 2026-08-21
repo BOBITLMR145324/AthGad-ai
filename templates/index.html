@@ -6,6 +6,7 @@
     <title>AthGad AI - Early Warning Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
     <link rel="stylesheet" href="/static/css/style.css?v={{ asset_version }}" />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
     <script src="/static/js/chart.umd.min.js?v={{ asset_version }}"></script>
   </head>
   <body class="bg-slate-900 text-slate-100 font-sans min-h-screen">
@@ -128,6 +129,59 @@
           {{ message }}
         </div>
         {% endfor %} {% endwith %}
+      </div>
+
+      <!-- SMS Alert Management Panel -->
+      <div
+        id="sms-management-panel"
+        class="bg-slate-950 border border-slate-800 rounded-xl p-6"
+      >
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3
+              class="text-emerald-400 text-xs font-bold tracking-wider uppercase"
+            >
+              📱 SMS Alert Management
+            </h3>
+            <p class="text-xs text-slate-400 mt-1">
+              Manage how you receive SMS alerts on your phone.
+            </p>
+          </div>
+          <span
+            id="sms-status-badge"
+            class="px-3 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300"
+            >Loading...</span
+          >
+        </div>
+        <div class="flex flex-wrap gap-3">
+          <button
+            id="sms-subscribe-btn"
+            onclick="manageSms('subscribe')"
+            class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase transition cursor-pointer"
+          >
+            Subscribe to SMS Alerts
+          </button>
+          <button
+            id="sms-unsubscribe-btn"
+            onclick="manageSms('unsubscribe')"
+            class="bg-amber-600 hover:bg-amber-500 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase transition cursor-pointer"
+          >
+            Unsubscribe from SMS
+          </button>
+          <button
+            id="sms-optout-btn"
+            onclick="manageSms('optout')"
+            class="bg-rose-600 hover:bg-rose-500 text-white font-bold px-4 py-2 rounded-lg text-xs tracking-wider uppercase transition cursor-pointer"
+          >
+            Opt Out from SMS
+          </button>
+        </div>
+        <p class="text-[10px] text-slate-500 mt-3">
+          <strong>Subscribe:</strong> Start receiving SMS alerts.
+          <strong>Unsubscribe:</strong> Stop SMS alerts but keep email alerts if
+          enabled. <strong>Opt Out:</strong> Stop all SMS alerts and switch your
+          default to email.
+        </p>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-8">

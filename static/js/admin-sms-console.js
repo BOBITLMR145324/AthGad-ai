@@ -2,6 +2,9 @@
 var viewState = {
   current: "sms",
   statusFilter: "",
+  smsPage: 1,
+  smsPageSize: 10,
+  smsLogs: [],
   dispatchPage: 1,
   dispatchPageSize: 10,
   dispatchLogs: [],
@@ -68,6 +71,7 @@ function switchView(name) {
 function setStatusFilter(btn) {
   viewState.statusFilter = btn.getAttribute("data-status") || "";
   viewState.dispatchPage = 1;
+  viewState.smsPage = 1;
   var chips = document.querySelectorAll(".status-chip");
   chips.forEach(function (c) {
     c.classList.toggle(
@@ -95,9 +99,17 @@ function renderSms(logs) {
   if (!logs.length) {
     body.innerHTML =
       '<tr><td colspan="11" class="px-3 py-8 text-center text-slate-500">No SMS deliveries matched yet.</td></tr>';
+    renderSmsPager(0);
     return;
   }
-  body.innerHTML = logs
+  var pageSize = viewState.smsPageSize;
+  var pages = Math.max(1, Math.ceil(logs.length / pageSize));
+  if (viewState.smsPage > pages) viewState.smsPage = pages;
+  if (viewState.smsPage < 1) viewState.smsPage = 1;
+  var start = (viewState.smsPage - 1) * pageSize;
+  var pageLogs = logs.slice(start, start + pageSize);
+
+  body.innerHTML = pageLogs
     .map(function (l) {
       return (
         "<tr class='border-b border-slate-800/60 hover:bg-slate-800/40'>" +
@@ -156,6 +168,72 @@ function renderSms(logs) {
       );
     })
     .join("");
+  renderSmsPager(logs.length);
+}
+
+// Render the Prev / page numbers / Next bar for the SMS delivery logs.
+function renderSmsPager(total) {
+  var bar = document.getElementById("sms-pager");
+  if (!bar) return;
+  var pageSize = viewState.smsPageSize;
+  var pages = Math.max(1, Math.ceil(total / pageSize));
+  var page = viewState.smsPage;
+  var from = total ? (page - 1) * pageSize + 1 : 0;
+  var to = Math.min(total, page * pageSize);
+
+  var html =
+    '<button type="button" class="pager-btn" data-page="' +
+    (page - 1) +
+    '"' +
+    (page <= 1 ? " disabled" : "") +
+    ">Prev</button>";
+
+  pagerWindow(pages, page).forEach(function (it) {
+    if (it === "...") {
+      html += '<span class="pager-dots">…</span>';
+    } else {
+      html +=
+        '<button type="button" class="pager-btn' +
+        (it === page ? " pager-active" : "") +
+        '" data-page="' +
+        it +
+        '">' +
+        it +
+        "</button>";
+    }
+  });
+
+  html +=
+    '<button type="button" class="pager-btn" data-page="' +
+    (page + 1) +
+    '"' +
+    (page >= pages ? " disabled" : "") +
+    ">Next</button>";
+
+  html +=
+    '<span class="pager-info">' +
+    (total ? from + "–" + to + " of " + total + " logs" : "0 logs") +
+    "</span>";
+
+  bar.innerHTML = html;
+
+  bar.querySelectorAll(".pager-btn").forEach(function (btn) {
+    if (btn.disabled) return;
+    btn.addEventListener("click", function () {
+      var p = parseInt(btn.getAttribute("data-page"), 10);
+      if (!isNaN(p)) {
+        viewState.smsPage = p;
+        // Apply the current status filter when navigating pages
+        var filteredSms = viewState.smsLogs;
+        if (viewState.statusFilter) {
+          filteredSms = viewState.smsLogs.filter(function (l) {
+            return (l.status || "").toUpperCase() === viewState.statusFilter;
+          });
+        }
+        renderSms(filteredSms);
+      }
+    });
+  });
 }
 
 function renderDispatch() {
@@ -313,7 +391,15 @@ function loadData() {
       var sms = results[0];
       var dispatch = results[1];
       if (sms.status === "ok") {
-        renderSms(sms.logs);
+        // Store all SMS logs and apply the status filter client-side
+        viewState.smsLogs = sms.logs;
+        var filteredSms = viewState.smsLogs;
+        if (viewState.statusFilter) {
+          filteredSms = viewState.smsLogs.filter(function (l) {
+            return (l.status || "").toUpperCase() === viewState.statusFilter;
+          });
+        }
+        renderSms(filteredSms);
         if (stamp) stamp.textContent = "Updated " + sms.last_sync;
       }
       if (dispatch.status === "ok") {
