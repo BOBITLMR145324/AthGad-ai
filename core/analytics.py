@@ -17,13 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Deterministic per-county seasonal baselines (loophole #2)
+# Deterministic per-county seasonal baselines 
 # ---------------------------------------------------------------------------
-# Realistic climatological/health reference values for each Eastern Kenya
-# county, used ONLY when the database is empty / no records exist yet. These
-# replace the old `np.random` fallback so empty-state alerts are stable and
-# reproducible instead of misleadingly random.
-# Keys: (temp_max, rain, evapo, base_cases, kp)
+
 COUNTY_BASELINES = {
     "Kitui":         (30.0, 4.0, 4.0, 12, 2.0),
     "Machakos":      (28.5, 6.0, 3.4, 18, 2.0),
@@ -35,11 +31,6 @@ COUNTY_BASELINES = {
     "Tharaka-Nithi": (26.0, 7.0, 3.3, 16, 2.0),
 }
 
-# ---------------------------------------------------------------------------
-# Per-county contamination tuning (loophole #5)
-# ---------------------------------------------------------------------------
-# The Isolation Forest `contamination` hyperparameter is tuned per county.
-# Overridable via the CONTAMINATION_OVERRIDES env var (JSON) for runtime tuning.
 DEFAULT_CONTAMINATION = 0.15
 COUNTY_CONTAMINATION = {
     "Kitui": 0.15,
@@ -73,9 +64,6 @@ class AthGadAnalyticsEngine:
         self.w_space = 0.20
         self._contamination_overrides = _load_contamination_overrides()
 
-    # ------------------------------------------------------------------
-    # LoopHole #2: Deterministic fallback baselines
-    # ------------------------------------------------------------------
     def _baseline_frame(self, county: str, days: int) -> pd.DataFrame:
         """Builds a deterministic baseline DataFrame (no randomness)."""
         temp_max, rain, evapo, cases, kp = COUNTY_BASELINES.get(
@@ -113,11 +101,7 @@ class AthGadAnalyticsEngine:
         Falls back to deterministic per-county baselines when the DB is empty
         OR when a read query fails (resilient analytics).
         """
-        # NOTE: climate_records has NO county column — climate data is stored
-        # as a regional reference point (geom), so it must NOT be filtered by
-        # county. Only health_records is scoped per-county.
-        # Interval arithmetic uses `INTERVAL '1 day' * :days` which binds the
-        # integer safely with SQLAlchemy/psycopg2.
+
         climate_query = """
             SELECT date_trunc('day', timestamp) as date,
                    AVG(temperature_max) as temp_max,
@@ -146,7 +130,6 @@ class AthGadAnalyticsEngine:
         df_health = self._safe_read_sql(health_query, {"days": days, "county": county})
         df_space = self._safe_read_sql(space_query, {"days": days})
 
-        # ---- Deterministic fallbacks (no np.random) ---------------------
         if df_climate.empty:
             df_climate = self._baseline_frame(county, days)[["date", "temp_max", "rain", "evapo"]]
         if df_health.empty:
@@ -167,9 +150,7 @@ class AthGadAnalyticsEngine:
         master_df = master_df.bfill().ffill().fillna(0)
         return master_df
 
-    # ------------------------------------------------------------------
-    # LoopHole #5: Per-county contamination tuning
-    # ------------------------------------------------------------------
+
     def compute_anomaly_scores(self, df: pd.DataFrame, county: str = "Kitui") -> np.ndarray:
         """
         Executes Isolation Forest tracking to highlight multidimensional anomalies.
@@ -178,7 +159,6 @@ class AthGadAnalyticsEngine:
         """
         features = ['temp_max', 'rain', 'evapo', 'total_cases', 'max_kp']
 
-        # Guard: IsolationForest requires at least 2 distinct samples to train.
         if df is None or df.empty or len(df) < 2:
             return np.zeros(len(df) if df is not None and not df.empty else 1)
 
@@ -186,20 +166,18 @@ class AthGadAnalyticsEngine:
 
         contamination = self._contamination_overrides.get(county, COUNTY_CONTAMINATION.get(county, DEFAULT_CONTAMINATION))
 
-        # Initialize Isolation Forest with per-county contamination
+
         iso_forest = IsolationForest(contamination=contamination, random_state=42)
         iso_forest.fit(X)
 
         raw_scores = iso_forest.decision_function(X)
 
-        # Invert and normalize to scale between 0 (safe) and 1 (extreme anomaly)
+
         denom = (raw_scores.max() - raw_scores.min() + 1e-6)
         normalized_anomalies = (raw_scores.max() - raw_scores) / denom
         return normalized_anomalies
 
-    # ------------------------------------------------------------------
-    # LoopHole #3: Adaptive (seasonal) weights
-    # ------------------------------------------------------------------
+
     def _compute_adaptive_weights(self, df: pd.DataFrame) -> dict:
         """
         Dynamically adjusts bearing weights based on recent per-domain
@@ -220,12 +198,12 @@ class AthGadAnalyticsEngine:
                 return 0.0
             return min(float(s.std() / mean) / ref_scale, 1.0)
 
-        # Volatility per domain (relative to a reference scale)
+
         vol_climate = _volatility(df.get("temp_max"), 0.5) + _volatility(df.get("rain"), 1.0)
         vol_health = _volatility(df.get("total_cases"), 1.0)
         vol_space = _volatility(df.get("max_kp"), 1.0)
 
-        # Boost a domain's weight when it is unusually volatile/trending
+
         raw = {
             "climate": max(defaults["climate"] + vol_climate * 0.15, 0.05),
             "health": max(defaults["health"] + vol_health * 0.15, 0.05),
@@ -234,9 +212,7 @@ class AthGadAnalyticsEngine:
         total = sum(raw.values())
         return {k: round(v / total, 4) for k, v in raw.items()}
 
-    # ------------------------------------------------------------------
-    # LoopHole #4: Time-series forecasting (future trajectories)
-    # ------------------------------------------------------------------
+
     def _day_modulation(self, county: str, base_date, day_index: int) -> float:
         """
         Deterministic per-county, per-calendar-day offset (range ±5%) used to
@@ -282,7 +258,7 @@ class AthGadAnalyticsEngine:
             s = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
             return (s - lo) / (hi - lo) if hi > lo else s * 0.0
 
-        # Build normalized 0..1 series per domain
+
         norm = {}
         for domain, (col, lo, hi) in features.items():
             norm[domain] = _normalize_series(col, lo, hi).clip(0.0, 1.0).values
@@ -293,7 +269,7 @@ class AthGadAnalyticsEngine:
 
         base_date = datetime.now().date()
 
-        # Forecast each domain with exponential smoothing + linear trend
+
         forecasts = []
         for i in range(horizon):
             day_num = start_offset + i
@@ -317,8 +293,7 @@ class AthGadAnalyticsEngine:
                 day_scores.append(weights[domain] * projected)
             forecasts.append(round(min(sum(day_scores), 1.0), 4))
 
-        # Belt-and-suspenders: guarantee every forecast day is distinct so the
-        # trajectory is never a flat line.
+
         used = set()
         for j, val in enumerate(forecasts):
             probe = val
@@ -331,7 +306,6 @@ class AthGadAnalyticsEngine:
             forecasts[j] = probe
             used.add(probe)
 
-        # Trend direction based on first vs last forecast point
         if len(forecasts) >= 2:
             if forecasts[-1] > forecasts[0] + 0.02:
                 trend = "rising"
@@ -342,8 +316,7 @@ class AthGadAnalyticsEngine:
         else:
             trend = "stable"
 
-        # Derive the predicted risk level from the final forecast point so the
-        # proactive actions match the future risk trajectory, not just today.
+
         final_score = forecasts[-1] if forecasts else base_score
         if final_score < 0.35:
             predicted_level = "Low"
@@ -369,9 +342,7 @@ class AthGadAnalyticsEngine:
         Combines individual metrics, normalizes them, and aggregates a localized score.
         Also attaches a non-breaking `forecast` trajectory block.
         """
-        # Fetch a single 30-day baseline and reuse it for both the composite
-        # risk computation and the 7-day forecast, avoiding 3 redundant SQL
-        # queries per risk evaluation.
+
         df = self.fetch_historical_baseline(county=county, days=30)
         anomaly_array = self.compute_anomaly_scores(df, county=county)
 
@@ -403,9 +374,7 @@ class AthGadAnalyticsEngine:
         else:
             risk_level = "High"
 
-        # Attach a forecast trajectory (non-breaking) — loophole #4.
-        # The already-fetched 30-day DataFrame is passed in so the forecast
-        # does not re-query the database.
+
         try:
             forecast = self.forecast_risk(county=county, horizon=7, df=df)
         except Exception as e:
@@ -426,7 +395,7 @@ class AthGadAnalyticsEngine:
             "forecast": forecast,
         }
 
-        # Log pure numeric findings down to your database staging layer safely
+    
         self._log_alert_to_db(risk_level, float(round(final_composite_score, 3)), county)
 
         return result_payload
@@ -461,9 +430,6 @@ class AthGadAnalyticsEngine:
                         WHERE county = :county AND risk_level = :level AND timestamp >= NOW() - (INTERVAL '1 minute');
                     """), {"county": county, "level": level})
 
-            # Keep the table bounded even on compute paths that never call the
-            # admin prune (risk-status, live-summary fallbacks). Cheap, throttled
-            # prune every N inserts so hot paths don't pay a DELETE each time.
             _maybe_prune_risk_alerts(keep_days=30)
 
         except Exception as e:
@@ -476,9 +442,6 @@ if __name__ == "__main__":
     print("\nCleaned AI Core Execution Output Payload:\n", analysis_output)
 
 
-# ---------------------------------------------------------------------------
-# Risk-alert table pruning (throttled)
-# ---------------------------------------------------------------------------
 _prune_insert_count = 0
 
 
